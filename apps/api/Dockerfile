@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Build context: the repository root.   docker build -f apps/api/Dockerfile -t nexora-api .
-FROM node:22-slim AS build
+FROM node:26-slim AS build
 RUN corepack enable
 WORKDIR /repo
 # Manifests first: this layer (and the install) is cached until a dependency actually changes.
@@ -13,7 +13,7 @@ COPY apps/api apps/api
 RUN pnpm --filter @nexora/api build \
  && pnpm --filter @nexora/api deploy --legacy --prod /out      # production dependencies + dist + drizzle migrations only
 
-FROM node:22-slim AS runtime
+FROM node:26-slim AS runtime
 ENV NODE_ENV=production PORT=4000
 WORKDIR /app
 COPY --from=build --chown=node:node /out /app
