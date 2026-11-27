@@ -15,7 +15,7 @@ dependencies = [
 [project.optional-dependencies]
 # Real semantic embeddings (Sentence Transformers). Heavy: pulls PyTorch. See docs/AI.md "Hosting evaluation".
 sbert = ["sentence-transformers>=3"]
-dev = ["pytest>=8", "httpx>=0.27"]
+dev = ["pytest>=8", "httpx>=0.28.1"]
 
 [project.scripts]
 nexora-ai = "nexora_ai.cli:main"
