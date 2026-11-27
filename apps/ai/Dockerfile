@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1
 # Build context: the repository root (the lessons are the knowledge base).   docker build -f apps/ai/Dockerfile -t nexora-ai .
-FROM python:3.12-slim AS build
+FROM python:3.15-slim AS build
 WORKDIR /src
 COPY apps/ai /src/apps/ai
 # A real (non-editable) install: this is the layout that once lost the SQL migrations, now covered by a test.
 RUN python -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir ./apps/ai
 
-FROM python:3.12-slim AS runtime
+FROM python:3.15-slim AS runtime
 ENV PATH="/opt/venv/bin:$PATH" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 APP_ENV=production EMBEDDER=hashing PORT=8000 \
     LESSONS_DIR=/app/lessons SOURCES_DIR=/app/sources
 RUN useradd --system --uid 10001 nexora
