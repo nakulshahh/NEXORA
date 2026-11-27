@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Build context: the repository root.   docker build -f apps/web/Dockerfile --build-arg API_ORIGIN=https://api.example.com -t nexora-web .
-FROM node:22-slim AS build
+FROM node:26-slim AS build
 RUN corepack enable
 WORKDIR /repo
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -15,7 +15,7 @@ ARG API_ORIGIN=http://api:4000
 ENV API_ORIGIN=$API_ORIGIN NEXT_OUTPUT=standalone NEXT_TELEMETRY_DISABLED=1
 RUN pnpm --filter @nexora/web build
 
-FROM node:22-slim AS runtime
+FROM node:26-slim AS runtime
 ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0 NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app
 # The standalone output already contains the traced node_modules; static assets and public/ are copied beside it.
