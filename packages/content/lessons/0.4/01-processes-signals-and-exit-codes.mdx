@@ -1,0 +1,112 @@
+---
+chapter: "0.4"
+slug: processes-signals-and-exit-codes
+title: "Processes, signals and exit codes"
+order: 1
+summary: "A backend is a process. The operating system starts it, tells it to stop with signals, and reads its exit code to learn how it ended. Knowing this makes deploys, crashes and containers much less mysterious."
+objectives:
+  - Explain a process, its environment and its file descriptors
+  - Distinguish SIGTERM from SIGKILL and say which can be handled
+  - Read exit codes, including the 128 plus signal convention
+  - Use pipes and set -o pipefail so scripts do not hide failures
+concepts: [process, signal, SIGTERM, SIGKILL, exit code, file descriptor, pipe, pipefail, environment]
+reading:
+  - title: "man 7 signal (Linux manual)"
+    url: "https://man7.org/linux/man-pages/man7/signal.7.html"
+  - title: "GNU Bash manual: Exit status"
+    url: "https://www.gnu.org/software/bash/manual/html_node/Exit-Status.html"
+misconceptions:
+  - belief: "Killing a process always lets it clean up."
+    correction: "SIGTERM can be caught, so a program can finish its work and exit. SIGKILL cannot be caught or ignored; the kernel removes the process immediately with no cleanup."
+  - belief: "A shell pipeline fails if any command in it fails."
+    correction: "By default the pipeline's exit status is that of the last command, so 'false | true' reports success. Use set -o pipefail to make a failure anywhere count."
+---
+
+## Why it exists
+
+Before frameworks and containers there is a **process**: a running program with its own memory, environment variables and open files. Every deploy tool, process manager and container runtime does the same few things to it: start it, send it signals, and read how it exited. Debugging "why did my service restart" starts here.
+
+<Callout kind="why">
+A container is mostly a process with some isolation around it. If you understand signals and exit codes, you understand most of what an orchestrator is telling you.
+</Callout>
+
+## How it works
+
+### Processes and their environment
+
+A process has a numeric id (PID), a parent, an **environment** (key-value strings inherited from its parent) and numbered **file descriptors**: 0 is standard input, 1 standard output, 2 standard error, and every open file or socket gets the next number. A child inherits a copy of its parent's exported variables, and changes it makes never flow back:
+
+```text file=env.txt
+sh -c 'FOO=bar; echo $FOO'     -> bar
+after child: FOO=''             (the parent never saw it)
+(export X=1; bash -c 'echo $X') -> 1      bash -c 'echo ${X:-nothing}' (not exported) -> nothing
+```
+
+This is why configuration works through the environment (B11) and why a variable set in one terminal is invisible in another.
+
+### Signals
+
+A **signal** is a small notification the kernel delivers to a process. The ones that matter:
+
+- **SIGTERM (15)**: "please stop". The default for `kill`, for `docker stop` and for orchestrators. A program can catch it and shut down cleanly (next chapters).
+- **SIGINT (2)**: Ctrl+C.
+- **SIGKILL (9)**: stop now. It cannot be caught, blocked or ignored; no cleanup code runs.
+- **SIGHUP (1)**: terminal closed; often reused to mean "reload config".
+
+Test on a server that takes 1.5 seconds to answer, sending SIGTERM 0.4 seconds into a request:
+
+```text file=sigterm.txt
+no handler:    curl exit=52, empty reply   (connection dropped mid-request)
+with handler:  curl exit=0, http=200, body "done"  (finished the request, then exited)
+```
+
+The default action for SIGTERM is to terminate immediately. Handling it is what makes a deploy invisible to users, the subject of the graceful shutdown chapter.
+
+### Exit codes
+
+When a process ends it returns a small integer. **0 means success; anything else means failure.** If a signal killed it, shells report 128 plus the signal number: a process ended by SIGTERM shows 143 (128 + 15), and one ended by SIGKILL shows 137 (128 + 9). A container that "exited with 137" was killed without cleanup, very often because it exceeded its memory limit or its stop timeout.
+
+### Pipes
+
+`a | b` connects a's standard output to b's standard input; both run at once and data streams between them. The exit status trap:
+
+```text file=pipefail.txt
+false | true                     -> exit status 0   (only the last command counts)
+set -o pipefail; false | true    -> exit status 1
+```
+
+A CI script like `build | tee log.txt` can report success while `build` failed. Start scripts with `set -euo pipefail` (stop on error, error on unset variables, honour pipeline failures).
+
+## Common mistakes
+
+<Callout kind="mistake">
+Starting your server with a wrapper shell script (`sh -c "node server.js"`) so that SIGTERM goes to the shell and never reaches Node. Use `exec node server.js` so the server replaces the shell as the process receiving signals.
+</Callout>
+
+- **Using `kill -9` as the first resort**, skipping cleanup and corrupting state.
+- **Ignoring exit codes** in scripts and CI.
+- **Assuming a variable set in one process reaches another** without `export` or a restart.
+- **Leaking file descriptors**, which eventually hits the per-process limit and fails with "too many open files".
+- **Reading logs only from stdout** when errors go to stderr.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Graceful stop (SIGTERM, then wait, then SIGKILL after a timeout) protects in-flight work but delays deploys if the program is slow to exit. Immediate kill is fast and risks lost work. Set the grace period from how long a request or job really takes.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Know what stops your service (orchestrator, deploy, autoscaler, out-of-memory killer), log the signal and exit code on shutdown, make the main process PID 1 or use a tiny init that forwards signals, and alert on restarts with code 137.
+</Callout>
+
+## Check yourself
+
+<Exercise id="os-sigkill" kind="quiz" prompt="Which signal cannot be caught or ignored by a program?" options={["SIGTERM", "SIGINT", "SIGKILL", "SIGHUP"]} answer={2} explain="SIGKILL is handled by the kernel directly, so the process gets no chance to clean up." />
+
+<Exercise id="os-exit" kind="predict" prompt="A process is stopped by SIGTERM (signal 15). What exit status does a shell usually report?" options={["0", "15", "143", "255"]} answer={2} explain="Shells report 128 plus the signal number: 128 + 15 = 143." />
+
+<Exercise id="os-pipe" kind="debug" prompt="A CI step 'npm run build | tee build.log' passes even though the build crashed. Why?" options={["tee hides errors by design", "The pipeline's exit status is the last command's (tee), unless pipefail is set", "Logs are not errors", "npm run is always successful"]} answer={1} explain="Without pipefail only the final command's status counts. Use set -o pipefail." />
+
+<Exercise id="os-exec" kind="scenario" prompt="Your container starts the app with a shell wrapper and 'docker stop' always takes 10 seconds before killing it. What is the likely cause?" options={["Docker is slow", "SIGTERM goes to the shell, not the app, so the app never shuts down gracefully until the SIGKILL timeout", "The app is too fast", "Ports are closed"]} answer={1} explain="Signals go to PID 1. If that is a shell that does not forward them, use exec so the app receives SIGTERM." />

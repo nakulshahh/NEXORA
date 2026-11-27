@@ -1,0 +1,106 @@
+---
+chapter: B7
+slug: queues-and-workers
+title: "Task queues and workers"
+order: 1
+summary: "Slow or unreliable work should not happen inside a web request. Put a job in a queue and let workers process it, claiming each job safely so two workers never take the same one."
+objectives:
+  - Explain why work is moved out of the request path
+  - Build a job queue on Postgres using FOR UPDATE SKIP LOCKED
+  - Describe at-least-once delivery and what happens when a worker crashes
+  - "Know the signals of a healthy queue: depth, age and throughput"
+concepts: [queue, worker, job, at-least-once, SKIP LOCKED, visibility timeout, backlog, outbox]
+reading:
+  - title: "PostgreSQL docs: SELECT ... FOR UPDATE SKIP LOCKED"
+    url: "https://www.postgresql.org/docs/current/sql-select.html#SQL-FOR-UPDATE-SHARE"
+  - title: "Enterprise Integration Patterns: Competing Consumers"
+    url: "https://www.enterpriseintegrationpatterns.com/patterns/messaging/CompetingConsumers.html"
+misconceptions:
+  - belief: "A queue guarantees each job runs exactly once."
+    correction: "Practical queues deliver at least once: if a worker crashes after doing the work but before reporting success, the job runs again. Jobs must be safe to run twice."
+  - belief: "If two workers read the queue at the same time they will naturally take different jobs."
+    correction: "Without a locking rule they select the same rows. Claiming must be atomic, for example with SKIP LOCKED in Postgres or a pop command in a dedicated broker."
+---
+
+## Why it exists
+
+Sending an email, resizing an image or calling a slow partner API can take seconds and can fail. Doing it inside the HTTP request makes users wait and ties success to something outside your control. A **queue** accepts the work immediately ("I will do this") and workers do it in the background at their own pace.
+
+<Callout kind="why">
+A queue converts a spike of requests into a steady stream of work, and turns "the partner is down" from a user-facing error into a delay.
+</Callout>
+
+## How it works
+
+The request handler inserts a job and returns. A pool of workers repeatedly claims a job, runs it, and marks it done. A job row needs a status, an attempt count and a time when it may next run:
+
+```sql file=jobs.sql mark=2,3,4
+CREATE TABLE jobs (
+  id serial PRIMARY KEY, payload text,
+  status text NOT NULL DEFAULT 'queued',
+  attempts int NOT NULL DEFAULT 0,
+  run_at timestamptz NOT NULL DEFAULT now()
+);
+```
+
+### Claiming safely
+
+```sql file=claim.sql mark=3
+UPDATE jobs SET status = 'running', attempts = attempts + 1
+FROM (SELECT id FROM jobs WHERE status = 'queued' AND run_at <= now()
+      ORDER BY id LIMIT 3 FOR UPDATE SKIP LOCKED) s
+WHERE jobs.id = s.id RETURNING jobs.id;
+```
+
+`FOR UPDATE` locks the chosen rows. `SKIP LOCKED` tells a second worker to skip rows another worker holds instead of waiting. Test with ten queued jobs and two workers claiming three each in separate transactions:
+
+```text file=claimed.txt
+worker A claimed 1,2,3 | worker B claimed 4,5,6
+without SKIP LOCKED, worker B: BLOCKED after 300ms (waiting on A's locks)
+```
+
+Distinct jobs with no waiting. Without it, B stalls until A commits.
+
+### Crashes and at-least-once
+
+A worker claimed jobs 1, 2 and 3 inside a transaction and its connection died before commit. Afterwards all ten jobs were `queued` again: the claim rolled back, so another worker will take them. That is the safety property, and also why **a job can run twice**: if the worker finished the side effect (sent the email) and then died before committing, the retry repeats it. The next lesson covers making that harmless.
+
+For long jobs, do not hold the transaction open for the whole run; mark the row `running` with a lease time, and have a reaper return jobs whose lease expired.
+
+### Postgres or a broker?
+
+A Postgres queue is enough for modest volumes, needs no new infrastructure and lets you enqueue in the *same transaction* as your data change (the **outbox** pattern: no job without the row, no row without the job). Dedicated brokers (Redis-based queues, RabbitMQ, SQS, Kafka) scale further and offer features such as delays, priorities and fan-out; a later chapter covers Kafka.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Enqueuing a job *after* committing the database change in separate steps. If the process dies in between, the change exists and the job never will. Enqueue in the same transaction, or use an outbox.
+</Callout>
+
+- **Workers that read then update in two steps**, so two workers take one job.
+- **No limit on attempts**, so a poison job retries forever.
+- **No dead-letter state** for jobs that keep failing.
+- **Unbounded queue growth** with no alert, until memory or disk runs out.
+- **Putting large payloads in the queue** instead of an id to fetch.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Queues add delay (work is not done when the request returns), a new failure surface and the need for idempotent jobs. They buy resilience and smooth load. If the user needs the result immediately, a queue is the wrong tool; show a "processing" state or do the work inline.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Track queue depth, the age of the oldest job and processing rate; alert on age, not just depth. Run several workers, scale them on backlog, give each job a timeout, and keep a dead-letter list that a human reviews.
+</Callout>
+
+## Check yourself
+
+<Exercise id="queue-why" kind="quiz" prompt="Why send an email from a background worker instead of inside the HTTP request?" options={["Email servers require workers", "The request returns fast and a slow or failing email service cannot break it", "Workers are cheaper than servers", "HTTP forbids network calls"]} answer={1} explain="Moving slow, failure-prone work out of the request keeps latency low and lets you retry independently." />
+
+<Exercise id="queue-skip" kind="predict" prompt="Two workers run the claim query at once with FOR UPDATE SKIP LOCKED. What happens?" options={["Both get the same jobs", "Each gets different jobs and neither waits", "The second errors", "The second waits for the first to commit"]} answer={1} explain="SKIP LOCKED skips rows the other worker has locked, so claims do not overlap and do not block." />
+
+<Exercise id="queue-crash" kind="scenario" prompt="A worker sends an email, then crashes before marking the job done. What will happen, and what does it imply?" options={["The email is never retried", "The job is retried and the email may be sent twice, so jobs must tolerate duplicates", "The database deletes the job", "Nothing, crashes cannot happen"]} answer={1} explain="At-least-once delivery means a finished-but-unacknowledged job runs again. Design the job to be idempotent." />
+
+<Exercise id="queue-outbox" kind="debug" prompt="Users sometimes get an order saved but no confirmation email is ever sent. The code commits the order, then enqueues the job. Why?" options={["The queue is too fast", "The process can die between the commit and the enqueue, losing the job", "Emails are not allowed", "Orders and jobs share a primary key"]} answer={1} explain="Two separate steps can be split by a crash. Insert the job in the same transaction as the order (outbox) so both happen or neither." />

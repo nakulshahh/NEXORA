@@ -1,0 +1,98 @@
+---
+chapter: "0.4"
+slug: files-permissions-and-the-dev-environment
+title: "Files, permissions and a reproducible dev environment"
+order: 2
+summary: "Everything on Linux is a file with an owner and permission bits. Learning to read permissions, inspect running processes and write down the setup makes bugs reproducible and deployments dull."
+objectives:
+  - Read and set Unix permission bits and understand umask
+  - Inspect a running system with ps, lsof, ss and strace
+  - Explain why services should not run as root
+  - Make a development setup reproducible with a lockfile, a version pin and a script
+concepts: [permissions, chmod, umask, root, lsof, ss, strace, lockfile, reproducible environment, PATH]
+reading:
+  - title: "Linux manual: chmod(1)"
+    url: "https://man7.org/linux/man-pages/man1/chmod.1.html"
+  - title: "Linux manual: strace(1)"
+    url: "https://man7.org/linux/man-pages/man1/strace.1.html"
+misconceptions:
+  - belief: "Running everything as root avoids permission problems, so it is the simple option."
+    correction: "It turns any bug or exploit in the service into full control of the machine. Fix the permission instead and run the service as an unprivileged user."
+  - belief: "If it works on my machine it will work in production."
+    correction: "Versions, environment variables, file paths, permissions and the operating system differ. A pinned runtime, a lockfile and a written setup script remove most of the differences."
+---
+
+## Why it exists
+
+Many backend problems are not logic bugs: "permission denied", "address already in use", "too many open files", "works on my laptop". The tools to answer them are few and old, and a short tour makes you effective on any server.
+
+<Callout kind="why">
+When something fails outside your code, you need to look at the process from the outside. These commands turn guesses into observations.
+</Callout>
+
+## How it works
+
+### Permissions
+
+Each file has an owner, a group and three sets of bits (owner, group, others) for read (r), write (w) and execute (x). `ls -l` shows them as `-rw-r--r--`: the owner can read and write, everyone else can read. `chmod 600 file` makes it `-rw-------`, readable only by its owner, the right mode for a private key. A new file's mode comes from the creator's **umask**: with `umask 022` a new file was `-rw-r--r--`, and with `umask 077` it was `-rw-------`. Directories need execute permission to be entered.
+
+A service should run as its own **unprivileged user** with access only to what it needs (its data directory, its config), never as root. Containers inherit the same rule: add a `USER` instruction in the Dockerfile.
+
+### Looking at a running system
+
+- `ps aux` or `pgrep -a node`: which processes exist and with what command line.
+- `ss -ltnp`: which process is listening on which port. This answers "address already in use" (a stale process holds the port).
+- `lsof -p PID`: files and sockets a process has open; shows file-descriptor leaks and what it is connected to.
+- `curl -v` and `curl -w` for HTTP; `jq` to read JSON responses.
+- `strace -p PID`: the system calls a process makes; the last call before a hang often explains it ("stuck in `read` on socket 9, waiting for the database"). It slows the process, so use it briefly.
+- `ulimit -n`: the maximum open file descriptors per process. A busy server that accepts many connections needs this raised from a small default; hitting it produces "too many open files".
+
+### Pipes and text tools
+
+`grep`, `sort`, `uniq -c`, `wc`, `awk` and `jq` chained with pipes answer most log questions in one line, for example counting error types or the slowest endpoints. Remember `set -o pipefail` in scripts.
+
+### A reproducible environment
+
+"Works on my machine" is usually unpinned versions. Make setup boring:
+
+- Pin the **runtime** version (`.nvmrc` or `engines` in `package.json`, `.python-version`).
+- Commit the **lockfile** (`pnpm-lock.yaml`, `poetry.lock`) and install from it with the frozen flag in CI.
+- Keep a `.env.example` listing every variable (B11) and a short README with exact commands.
+- Provide one command to start dependencies (a Docker Compose file or a script) and one to run tests.
+- Run the same checks in CI that you run locally.
+
+The test: can a new teammate go from clone to running tests in minutes by following the README without asking you anything?
+
+## Common mistakes
+
+<Callout kind="mistake">
+`chmod 777` to make an error go away. It lets every user on the machine modify the file. Find out which user needs which access and grant exactly that.
+</Callout>
+
+- **Running as root** inside containers and on servers.
+- **Committing `.env` files or private keys**, or leaving them world-readable.
+- **Killing the process holding a port** without checking what it is.
+- **Different runtime versions** between laptop, CI and production.
+- **Undocumented manual setup steps** that exist only in someone's head.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Strict permissions and unprivileged users cost occasional setup friction and prevent large incidents. A fully containerised dev environment is reproducible but slower to iterate on than running tools natively; many teams run dependencies in containers and the app natively.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Run services under dedicated users with minimal rights, set explicit file-descriptor limits, keep read-only filesystems where possible, record the exact runtime and dependency versions of every deploy, and practise diagnosing a hung process with `ss`, `lsof` and `strace` before you need to.
+</Callout>
+
+## Check yourself
+
+<Exercise id="fs-mode" kind="quiz" prompt="Which mode makes a private key readable and writable only by its owner?" options={["777", "644", "600", "755"]} answer={2} explain="600 means read and write for the owner and no access for group or others." />
+
+<Exercise id="fs-port" kind="scenario" prompt="Starting your server fails with 'address already in use'. What is the first diagnostic command?" options={["rm -rf node_modules", "ss -ltnp to see which process is listening on the port", "chmod 777 .", "reboot"]} answer={1} explain="ss shows the listening socket and, with -p, the owning process, so you can see whether it is a stale copy of your own server." />
+
+<Exercise id="fs-root" kind="debug" prompt="A path traversal bug lets an attacker read arbitrary files, and your app runs as root. Why is this worse?" options={["Root is slower", "As root the attacker can read or overwrite any file on the machine, not just the app's", "It is not worse", "Root cannot read files"]} answer={1} explain="A process's authority is its user's authority. Running unprivileged limits what an exploit can reach." />
+
+<Exercise id="fs-repro" kind="quiz" prompt="What most directly makes 'works on my machine' bugs less likely?" options={["Faster laptops", "Pinned runtime versions and a committed lockfile", "More comments", "Bigger servers"]} answer={1} explain="Identical language and dependency versions across machines remove a major source of differences." />

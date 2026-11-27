@@ -1,0 +1,112 @@
+---
+chapter: A7
+slug: pagination-filtering-versioning
+title: "Pagination, filtering and versioning"
+order: 2
+summary: "Never return an unbounded list. Offset pages are simple but skip and repeat rows when data changes; cursor pages stay stable and fast. Version the contract so change does not break clients."
+objectives:
+  - Explain why list endpoints must be bounded and paginated
+  - Compare offset and cursor (keyset) pagination, including the cost and the consistency problem
+  - Design filtering and sorting parameters with an allow-list
+  - Choose a versioning approach and know which changes are breaking
+concepts: [pagination, offset, cursor, keyset pagination, filtering, sorting, API versioning, breaking change]
+reading:
+  - title: "Use The Index, Luke: Paging Through Results"
+    url: "https://use-the-index-luke.com/sql/partial-results/fetch-next-page"
+  - title: "Stripe API: Pagination"
+    url: "https://docs.stripe.com/api/pagination"
+misconceptions:
+  - belief: "?page=2&limit=20 is always the right way to paginate."
+    correction: "Offset pagination makes the database count past every skipped row, so deep pages are slow, and rows inserted or deleted between requests make items repeat or disappear. Cursor pagination avoids both."
+  - belief: "Adding a field to a response is a breaking change."
+    correction: "Adding optional fields is normally backwards compatible if clients ignore unknown fields. Removing or renaming a field, changing a type, or making an optional input required is what breaks clients."
+---
+
+## Why it exists
+
+`GET /orders` on a table with ten million rows must not return ten million rows. An unbounded endpoint is slow, expensive and a ready-made denial of service. Every list needs a limit and a way to ask for the next part. And since the API will live longer than its first design, you also need a plan for changing it without breaking the code that already calls it.
+
+<Callout kind="why">
+Bounded lists protect your servers, and a versioning policy protects your clients. Both are promises that are far cheaper to make at the start than to add later.
+</Callout>
+
+## How it works
+
+### Offset pagination
+
+`?limit=20&offset=40` maps to `LIMIT 20 OFFSET 40`. It is easy to build and lets a client jump to page 7. It has two problems.
+
+**Cost:** the database must walk past all 40 skipped rows to find the 41st. Page 50 000 does that walking every time.
+
+**Consistency:** the data moves between requests. Take ten rows, read three, delete row 2, then read the next three with offset 3:
+
+```js file=page.mjs mark=3,4,5
+let rows = Array.from({ length: 10 }, (_, i) => ({ id: i + 1 }));
+const offsetPage = (offset, limit) => rows.slice(offset, offset + limit).map(r => r.id);
+const keysetPage = (after, limit) => rows.filter(r => r.id > after).slice(0, limit).map(r => r.id);
+// page 1: offsetPage(0,3) -> [1,2,3]    keysetPage(0,3) -> [1,2,3]
+rows = rows.filter(r => r.id !== 2);                 // a row is deleted between requests
+// page 2: offsetPage(3,3) -> [5,6,7]    keysetPage(3,3) -> [4,5,6]
+```
+
+Offset page 2 returns `[5, 6, 7]`: row 4 shifted into the first page's range and was **never shown**. Keyset page 2 returns `[4, 5, 6]`, which is right.
+
+### Cursor (keyset) pagination
+
+Instead of "skip N", say "give me the rows after the last one I saw": `WHERE id > :last ORDER BY id LIMIT 20`. With an index on `id` the database jumps straight to that point, so page 50 000 costs the same as page 1, and inserts or deletes do not shift the window. The API returns an opaque **cursor** that the client sends back:
+
+```js file=cursor.mjs mark=1
+const cursor = Buffer.from(JSON.stringify({ id: 3 })).toString("base64url"); // "eyJpZCI6M30"
+JSON.parse(Buffer.from(cursor, "base64url")); // { id: 3 }
+```
+
+Treat the cursor as opaque and **validate it on the way back in**: it is client input like any other (see the validation chapter), and encoding does not make it trustworthy. If you sort by something that is not unique (a timestamp), include a unique tie-breaker such as the id in both the sort and the cursor, otherwise rows with equal values are skipped or repeated.
+
+The cost: no jumping to "page 7", and a stable sort key is required.
+
+### Filtering and sorting
+
+Accept filters as named query parameters (`?status=open&created_after=2026-01-01`) and sorting as an allow-listed field (`?sort=-created_at`). Never pass a client-supplied column name or `ORDER BY` fragment into SQL; map it from a fixed list instead. Always cap `limit` and apply a sensible default.
+
+### Versioning
+
+A **breaking change** is one that makes a correct existing client fail: removing or renaming a field, changing a type or meaning, tightening validation, or adding a required input. Adding optional fields and new endpoints is not breaking, *provided* clients ignore fields they do not know.
+
+Common ways to carry a version: in the path (`/v2/orders`), in a header, or by date (a client pins "the API as of 2026-03-01"). Path versioning is the easiest to see, test and cache. Whatever you choose:
+
+- Prefer **additive evolution** and keep one version alive as long as possible.
+- Announce deprecation with a date, a `Deprecation` or `Sunset` header, and usage metrics per client.
+- Never change the meaning of an existing field in place.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Paginating without a stable, unique sort order. Without it, two requests can disagree about which row comes next, so items repeat or vanish even with cursors.
+</Callout>
+
+- **No maximum `limit`**, so `?limit=1000000` works.
+- **Returning total counts on huge tables** with `COUNT(*)` on every page; it can cost more than the page itself.
+- **Passing user input into `ORDER BY`** or column names.
+- **Versioning everything at once**, forcing clients to migrate for one changed endpoint.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Offset pagination suits small, slow-changing data and admin screens where jumping to a page matters. Cursor pagination suits feeds, large tables and anything under constant writes, at the price of no random page access. Many APIs offer cursors by default and keep offset only where a UI truly needs page numbers.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Default and cap `limit`, index the columns you filter and sort on, and make cursors opaque and signed or validated. Track which clients call which version so a deprecation is a measured decision, not a guess. Contract tests that compare responses against the published schema catch accidental breaking changes before they ship.
+</Callout>
+
+## Check yourself
+
+<Exercise id="page-offset-skip" kind="predict" prompt="Rows 1 to 10 exist. A client reads page 1 (offset 0, limit 3 = rows 1,2,3). Row 2 is then deleted. What does offset 3, limit 3 return?" options={["Rows 4, 5, 6", "Rows 5, 6, 7", "Rows 3, 4, 5", "Rows 1, 3, 4"]} answer={1} explain="After the delete, rows shift down by one, so offset 3 starts at row 5. Row 4 moved into the already-read window and is never returned. A cursor 'after id 3' would return 4, 5, 6." />
+
+<Exercise id="page-why-keyset-fast" kind="quiz" prompt="Why does keyset pagination stay fast on deep pages?" options={["It caches every page", "An index lets the database jump directly to the last-seen key instead of counting past skipped rows", "It returns fewer columns", "It disables sorting"]} answer={1} explain="WHERE id > :last uses the index to seek to a position. OFFSET has to step over every skipped row each time." />
+
+<Exercise id="page-sort-sql" kind="debug" prompt="An endpoint builds SQL as 'ORDER BY ' + req.query.sort. What is the problem?" options={["It is slower", "The client controls part of the SQL, which allows injection", "ORDER BY needs quotes", "It breaks pagination only"]} answer={1} explain="Column names cannot be parameterised, so map the requested sort onto a fixed allow-list of known columns instead of concatenating client text." />
+
+<Exercise id="page-breaking" kind="scenario" prompt="Which change to GET /users/42 most likely breaks existing clients?" options={["Adding an optional field avatarUrl", "Renaming the field name to fullName", "Adding a new endpoint /users/42/avatar", "Adding a Cache-Control header"]} answer={1} explain="A client reading user.name now gets undefined. Additions are usually safe; renames and removals break correct clients and need a new version or a transition period." />

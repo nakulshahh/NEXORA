@@ -1,0 +1,116 @@
+---
+chapter: A2
+slug: routes-are-a-table
+title: "Routes are a lookup table"
+order: 1
+summary: "Routing is matching a method and a path against a list of patterns and calling the first handler that fits. Build a tiny router and the framework stops being magic."
+objectives:
+  - Describe routing as a search over (method, path pattern) pairs
+  - Explain how path parameters are extracted from a URL
+  - Write a minimal router and predict which route it picks
+  - Distinguish 404 Not Found from 405 Method Not Allowed
+concepts: [route, path parameter, pattern matching, handler, "404", "405", Allow header]
+reading:
+  - title: "Express: Routing"
+    url: "https://expressjs.com/en/guide/routing.html"
+  - title: "MDN: 405 Method Not Allowed"
+    url: "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/405"
+misconceptions:
+  - belief: "The framework knows which function to call by magic."
+    correction: "It holds a list of patterns. For each request it walks the list, tests each pattern against the method and path, and calls the first match."
+  - belief: "A wrong method on a real URL is just a 404."
+    correction: "The path exists, so the honest answer is 405 with an Allow header listing the methods that work. 404 means nothing matches the path at all. Some frameworks do not do this for you."
+---
+
+## Why it exists
+
+After the HTTP request is parsed you have a method such as `GET` and a path such as `/users/42/posts`. Something must decide which of your functions should run. Hard-coding a giant `if` over strings does not scale, so every framework keeps a **route table**: a list of (method, pattern, handler) entries.
+
+<Callout kind="why">
+Routing separates "what URL was asked for" from "what code answers it", so you can add an endpoint without touching the others.
+</Callout>
+
+## How it works
+
+### Patterns and parameters
+
+A pattern is a path with holes. `/users/:id` has a hole called `id`. To match, split into segments: literal segments must be equal, `:name` segments accept any non-empty text without a slash, and the captured text becomes a **parameter**.
+
+```js file=router.mjs mark=2,3,4,5,6,7,8,9
+function compile(pattern) {
+  const names = [];
+  const re = pattern.split("/").map((seg) => {
+    if (seg.startsWith(":")) { names.push(seg.slice(1)); return "([^/]+)"; }
+    return seg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }).join("/");
+  return { regex: new RegExp(`^${re}$`), names };
+}
+
+export function createRouter() {
+  const routes = [];
+  return {
+    add(method, pattern, handler) { routes.push({ method, ...compile(pattern), handler }); },
+    match(method, rawPath) {
+      const path = rawPath.split("?")[0];
+      const allowed = new Set();
+      for (const r of routes) {
+        const m = r.regex.exec(path);
+        if (!m) continue;
+        if (r.method !== method) { allowed.add(r.method); continue; }
+        const params = Object.fromEntries(r.names.map((n, i) => [n, decodeURIComponent(m[i + 1])]));
+        return { status: 200, handler: r.handler, params };
+      }
+      return allowed.size ? { status: 405, allow: [...allowed] } : { status: 404 };
+    },
+  };
+}
+```
+
+That is a working router in about twenty lines. The query string is cut off first because it is not part of the path. Parameters are percent-decoded, so `/users/a%2Fb` gives the id `a/b`.
+
+### 404 versus 405
+
+If no pattern fits the path, the answer is **404 Not Found**. If the path fits at least one pattern but with another method, the answer is **405 Method Not Allowed**, with an `Allow` header naming the methods that do work. The router above collects those methods while it scans.
+
+<Seq participants={["Client", "Router", "Handler"]} messages={[
+  {"from":0,"to":1,"label":"GET /users/42"},
+  {"from":1,"to":1,"label":"test patterns in order, first match wins"},
+  {"from":1,"to":2,"label":"call handler with params { id: 42 }"},
+  {"from":2,"to":0,"label":"200 + body"}
+]} />
+
+### Cost
+
+Scanning the list is O(R) regexp tests for R routes. For a few hundred routes that is microseconds and irrelevant next to a database call. Large frameworks compile all routes into a **trie** (a tree keyed by path segment) so lookup depends on the URL's length, not the number of routes.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Returning 404 for a valid path with the wrong method. Clients and developers lose the hint that the URL is right and only the verb is wrong. Return 405 with an Allow header.
+</Callout>
+
+- **Forgetting that parameters are strings.** The `id` is `"42"`, not `42`. Convert and validate it.
+- **Trusting decoded parameters.** `decodeURIComponent` can produce `/`, `..` and other surprises. Never join a parameter into a file path without validating it.
+- **Throwing on bad encoding.** `decodeURIComponent("%E0%A4%A")` throws. A hostile URL must produce a 400, not a crash.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+A route table is simple, explicit and easy to read, but in a list the first match wins, so order matters (next lesson). Declarative routing (file-system routes, decorators) hides the table but does not remove the rules.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Frameworks report the matched pattern (such as /users/:id) rather than the raw URL to logs and metrics. Raw URLs contain ids and create millions of distinct metric labels; the pattern keeps the cardinality small and the dashboards usable.
+</Callout>
+
+## Check yourself
+
+<Exercise id="routes-params" kind="predict" prompt="Pattern /users/:id/posts/:postId. Which request path gives postId equal to the text 7?" options={["/users/3/posts/7", "/users/posts/7", "/users/3/7", "/users/3/posts"]} answer={0} explain="Segments must line up: users, a value for id, posts, a value for postId. Only the first path has that shape." />
+
+<Exercise id="routes-405" kind="quiz" prompt="Routes exist for GET /users/:id and DELETE /users/:id. A client sends POST /users/42. What is the correct response?" options={["404 Not Found", "405 Method Not Allowed with Allow: GET, DELETE", "200 OK", "500 Internal Server Error"]} answer={1} explain="The path matches, only the method is unsupported. 405 plus an Allow header tells the client exactly what is possible." />
+
+<Exercise id="routes-decode" kind="debug" prompt="A handler does fs.readFile('./files/' + params.name). Requesting /files/..%2F..%2Fsecret returns a private file. What went wrong?" options={["The router matched the wrong pattern", "The decoded parameter contained ../ and was joined into a path without validation", "The file was too large", "The method was wrong"]} answer={1} explain="Percent-decoding turns %2F into a slash. The parameter is untrusted input and must be validated, not concatenated into a file path." />
+
+<Exercise id="routes-metrics" kind="scenario" prompt="Your metrics dashboard has a separate line for every user id because it records the raw URL. What should it record instead?" options={["A hash of the URL", "The matched route pattern such as /users/:id", "Only the HTTP method", "The IP address"]} answer={1} explain="The pattern groups all ids into one series, keeping label cardinality small while still saying which endpoint was hit." />

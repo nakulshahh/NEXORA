@@ -1,0 +1,108 @@
+---
+chapter: D6
+slug: websockets-and-realtime-fanout
+title: "WebSockets and real-time fan-out"
+order: 1
+summary: "HTTP is request and response; a WebSocket upgrades one connection into a long-lived, two-way channel with tiny frames. The hard part is not the protocol but holding many open connections and fanning messages out across servers."
+objectives:
+  - Explain the WebSocket handshake and verify the accept key computation
+  - Compare WebSockets with polling and server-sent events by overhead and direction
+  - Calculate fan-out bandwidth and send rates for a broadcast
+  - Design for reconnection, presence, backpressure and multiple server instances
+concepts: [WebSocket, upgrade handshake, frame, polling, server-sent events, fan-out, pub/sub, heartbeat, backpressure, sticky connections]
+reading:
+  - title: "RFC 6455: The WebSocket Protocol"
+    url: "https://www.rfc-editor.org/rfc/rfc6455"
+  - title: "MDN: WebSockets API"
+    url: "https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API"
+misconceptions:
+  - belief: "WebSockets are always better than HTTP for anything live."
+    correction: "They help for frequent two-way messages. For occasional updates, polling or server-sent events are simpler, work through more proxies and need no special scaling. Every open socket costs memory and a connection slot."
+  - belief: "A WebSocket connection stays up reliably once connected."
+    correction: "Networks drop, proxies close idle connections, servers restart. Clients must detect failure with heartbeats and reconnect with backoff, resuming from the last event they saw."
+---
+
+## Why it exists
+
+HTTP lets the client ask; the server cannot speak first. Chat, live scores, collaborative editing and notifications need the server to push. Polling repeatedly wastes requests, and holding one connection open and sending when something happens is more efficient.
+
+<Callout kind="why">
+Real-time features turn the server from a stateless function into something that holds state per connected client. That is what makes scaling them different.
+</Callout>
+
+## How it works
+
+### The handshake
+
+A WebSocket starts as an ordinary HTTP request with `Upgrade: websocket` and a random `Sec-WebSocket-Key`. The server proves it understands the protocol by replying `101 Switching Protocols` with `Sec-WebSocket-Accept`: the base64 of the SHA-1 of the key concatenated with a fixed GUID. I computed it for the example key in RFC 6455:
+
+```text file=accept.txt
+key "dGhlIHNhbXBsZSBub25jZQ==" -> accept "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="   (matches the RFC)
+```
+
+After that the same TCP connection carries WebSocket **frames** in both directions. Use `wss://` (TLS) so intermediaries cannot interfere.
+
+### Frames are small
+
+A frame has a 2-byte header for payloads under 126 bytes (4 bytes up to 64 KB, 10 beyond), plus 4 bytes of masking key for client-to-server frames. A 20-byte message costs 22 bytes from server to client and 26 from client to server. A single HTTP polling request carries on the order of 137 bytes of request headers in a minimal example, before cookies and before any response headers. For frequent small messages the overhead gap is large.
+
+### Alternatives
+
+- **Polling**: the client asks every N seconds. Simple, cacheable, wasteful and laggy.
+- **Long polling**: the server holds the request until there is data. Works everywhere, awkward at scale.
+- **Server-sent events (SSE)**: one-way server-to-client stream over plain HTTP with automatic reconnect. Often enough for notifications and feeds.
+- **WebSocket**: two-way, lowest overhead; needs connection-aware infrastructure.
+
+### Fan-out arithmetic
+
+Broadcasting a 100-byte message (plus a 2-byte header) to every connected client:
+
+```text file=fanout.txt
+1,000 clients x 1 msg/s:      0.10 MB/s out,       1,000 sends/s
+100,000 clients x 1 msg/s:   10.20 MB/s out,     100,000 sends/s
+100,000 clients x 10 msg/s: 102.00 MB/s out,   1,000,000 sends/s
+```
+
+The third row is about 0.8 Gbit/s from one broadcast channel and a million socket writes per second, more than one process handles. So you shard connections across servers, batch or coalesce messages (send the latest state every 100 ms instead of every change), and send only what each client subscribed to.
+
+### Many servers
+
+A client is connected to one server, but the event may originate elsewhere. Use **pub/sub** between servers (Redis pub/sub, a broker): a server that receives a message publishes it, every server forwards it to the connected clients subscribed to that room. The load balancer must keep a connection on one server for its lifetime (not a problem for a single long-lived connection) and must allow long idle timeouts and graceful draining (shutdown: send a close frame so clients reconnect elsewhere).
+
+### Reliability
+
+Send **heartbeats** (ping/pong) to detect dead peers and to keep proxies from closing idle connections. Clients **reconnect with backoff and jitter** (the retry-storm lesson applies: a server restart disconnects thousands at once) and resume from the last event id so no messages are lost. Apply **backpressure**: if a client cannot keep up, its send buffer grows; drop or coalesce messages, or disconnect it rather than exhausting memory. Authenticate at connect time and authorise every subscription (the IDOR rule applies to rooms).
+
+## Common mistakes
+
+<Callout kind="mistake">
+Trusting the connection once it is open. A user's permissions can change, and each message or subscription still needs an authorisation check.
+</Callout>
+
+- **No heartbeat**, so dead connections linger and memory leaks.
+- **Reconnect storms** with no jitter after a deploy.
+- **Unbounded per-client buffers.**
+- **Storing room state only in one process's memory** and breaking with a second instance.
+- **Using WebSockets for something SSE or polling would do.**
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Open connections give low latency and low per-message overhead, at the cost of stateful servers, connection limits (file descriptors, memory) and harder deploys. Polling and SSE are stateless and simpler and use more bandwidth or lack the reverse channel.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Track concurrent connections, connect and disconnect rates, message rates and send-buffer size per server; raise file-descriptor limits (0.4); load test connection counts, not just request rates; drain connections gracefully on deploy; and cap message size and rate per client.
+</Callout>
+
+## Check yourself
+
+<Exercise id="ws-upgrade" kind="quiz" prompt="How does a WebSocket connection begin?" options={["A separate UDP socket", "An HTTP request with an Upgrade header, answered with 101 Switching Protocols", "A DNS record", "A TLS renegotiation"]} answer={1} explain="The handshake is an ordinary HTTP request that the server accepts by switching protocols on the same TCP connection." />
+
+<Exercise id="ws-fanout" kind="predict" prompt="You broadcast a 100-byte message to 100 000 connected clients once per second. About how many socket writes per second?" options={["1", "About 1 000", "100 000", "10 000 000"]} answer={2} explain="Each message is written to every client's connection, so one broadcast per second is 100 000 sends per second." />
+
+<Exercise id="ws-scale" kind="scenario" prompt="Two server instances each hold half the chat clients. A user on server 1 sends a message to a room whose members are on both. What is needed?" options={["Nothing", "A shared pub/sub so server 1 forwards the message to server 2's clients", "Sticky sessions", "A longer timeout"]} answer={1} explain="Each server only knows its own connections. Pub/sub between servers delivers an event to all instances." />
+
+<Exercise id="ws-reconnect" kind="debug" prompt="After a deploy, thousands of clients reconnect at the same instant and the new servers fall over. What is missing?" options={["More heartbeats", "Reconnect backoff with jitter, and resuming gracefully", "A larger payload", "UDP"]} answer={1} explain="Synchronised reconnects form a retry storm. Randomised exponential backoff spreads the load." />

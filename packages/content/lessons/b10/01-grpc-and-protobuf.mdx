@@ -1,0 +1,112 @@
+---
+chapter: B10
+slug: grpc-and-protobuf
+title: "gRPC and Protocol Buffers: typed service-to-service calls"
+order: 1
+summary: "gRPC runs typed remote calls over HTTP/2 with Protocol Buffers encoding. Messages are compact binary with field numbers instead of names, which saves bytes and makes the contract explicit, at the cost of readability and browser support."
+objectives:
+  - Explain what a .proto contract defines and what gRPC adds on top
+  - Work out a small protobuf message at the byte level, including varints
+  - Compare gRPC with JSON over REST for internal services
+  - Evolve a schema without breaking old clients
+concepts: [gRPC, Protocol Buffers, varint, field number, HTTP/2, streaming, schema evolution, code generation]
+reading:
+  - title: "Protocol Buffers: Encoding"
+    url: "https://protobuf.dev/programming-guides/encoding/"
+  - title: "gRPC: Core concepts"
+    url: "https://grpc.io/docs/what-is-grpc/core-concepts/"
+misconceptions:
+  - belief: "gRPC is always faster than REST."
+    correction: "It usually sends fewer bytes and parses faster, and multiplexes calls over one HTTP/2 connection, but if your time is dominated by database work or the network round trip the difference is small. Measure your own path."
+  - belief: "Protobuf messages carry the field names, like JSON."
+    correction: "They carry only field numbers and values. Both sides must share the schema; the bytes alone do not say what the fields mean, which is why they are compact and why changing field numbers breaks compatibility."
+---
+
+## Why it exists
+
+Between your own services you control both ends, so the flexibility of human-readable JSON buys less and costs bytes, parsing time and runtime type errors. A contract-first approach gives generated clients and servers in many languages, typed errors at build time and streaming.
+
+<Callout kind="why">
+gRPC trades the browser-friendly, debug-by-eye simplicity of REST for strict contracts, efficient encoding and streaming between services you own.
+</Callout>
+
+## How it works
+
+### The contract
+
+You describe messages and services in a `.proto` file; tools generate code for each language:
+
+```proto file=user.proto mark=2,3,4,5
+message User {
+  int64  id     = 1;
+  string name   = 2;
+  bool   active = 3;
+  int64  score  = 4;
+}
+service Users { rpc GetUser (GetUserRequest) returns (User); }
+```
+
+The numbers (`= 1`) are **field numbers**: the identity of a field on the wire.
+
+### What the bytes look like
+
+Encode `{id: 150, name: "Ada", active: true, score: 300}`. Each field is a key (field number and type), then the value. Integers use a **varint**: seven bits per byte, with the high bit saying "more bytes follow". 1 is `01`, 150 is `96 01`, 300 is `ac 02`.
+
+```text file=bytes.txt
+08 96 01        field 1 (varint) = 150
+12 03 41 64 61  field 2 (length 3) = "Ada"
+18 01           field 3 (varint) = true
+20 ac 02        field 4 (varint) = 300
+total: 13 bytes
+
+JSON: {"id":150,"name":"Ada","active":true,"score":300}  =  49 bytes
+```
+
+I computed those bytes by hand-encoding the format in a script; the protobuf documentation's encoding guide shows the same scheme. Here protobuf is 13 bytes against JSON's 49, about a quarter. Small numbers cost one byte, names cost none. The saving shrinks for text-heavy payloads and grows for number-heavy ones, and gzip narrows the gap for JSON.
+
+### gRPC on top
+
+gRPC sends these messages over **HTTP/2**: many concurrent calls on one connection, header compression, and four call shapes: unary (one request, one response), server streaming, client streaming and bidirectional streaming. Calls carry **deadlines** that propagate downstream, and a defined set of status codes. Because of HTTP/2 framing and trailers, browsers cannot call gRPC directly; use gRPC-Web or a gateway, and keep REST/JSON for public APIs.
+
+### Evolving a schema
+
+- Add new fields with **new numbers**; old readers ignore unknown fields.
+- Never reuse or renumber a field number; mark removed ones `reserved`.
+- Do not change a field's type incompatibly.
+- Treat missing fields as defaults, since protobuf3 does not tell "unset" from zero without the `optional` keyword.
+
+Run a compatibility check in CI so a breaking change fails the build.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Renumbering fields or reusing a deleted field's number. Old messages in queues or caches are then decoded as the wrong field, silently corrupting data.
+</Callout>
+
+- **No deadline on calls**, repeating the timeout mistakes from the fault-tolerance lessons.
+- **Exposing internal gRPC directly to browsers.**
+- **Huge messages**; stream or paginate instead.
+- **Treating zero as "missing"** for numeric fields.
+- **Adopting gRPC for a two-service system** where a plain HTTP call is simpler.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+gRPC gives strong contracts, smaller payloads and streaming; you pay with tooling, a build step, harder debugging (binary payloads) and no direct browser support. REST/JSON is easy to inspect and universal, at a cost in bytes and looser types. Many systems use REST at the edge and gRPC inside.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Set deadlines and retry policy per method, enable server reflection or keep protos in a shared repository, version services deliberately, propagate trace and request ids in metadata, and use a load balancer that understands HTTP/2 (long-lived connections defeat naive connection-level balancing).
+</Callout>
+
+## Check yourself
+
+<Exercise id="grpc-names" kind="quiz" prompt="What identifies a field in a protobuf message on the wire?" options={["Its name", "Its field number", "Its position in the file", "A JSON key"]} answer={1} explain="Messages carry field numbers and values; names exist only in the schema." />
+
+<Exercise id="grpc-varint" kind="predict" prompt="In a varint, 150 is encoded as 96 01. Why does it take two bytes?" options={["150 is negative", "Each byte holds 7 bits and 150 needs more than 7 bits, so a continuation bit is set", "Protobuf pads to two bytes", "It is a string"]} answer={1} explain="Values up to 127 fit in one byte. 150 exceeds that, so the first byte carries the low 7 bits with the high bit set, and the next byte carries the rest." />
+
+<Exercise id="grpc-evolve" kind="debug" prompt="A team deletes field 3 and later adds a new field also numbered 3 with a different type. Old data in a queue is now garbled. What went wrong?" options={["Nothing", "A field number was reused, so old bytes are decoded as the new field", "Queues are binary", "HTTP/2 is broken"]} answer={1} explain="Field numbers are permanent identities. Reserve removed numbers and never reuse them." />
+
+<Exercise id="grpc-choose" kind="scenario" prompt="You expose a public API to third-party developers using browsers and curl. Which is the safer default?" options={["gRPC only", "REST over HTTP with JSON, possibly with gRPC inside your network", "A custom binary protocol", "SOAP only"]} answer={1} explain="Public APIs favour universality and easy debugging. gRPC shines between services you control." />

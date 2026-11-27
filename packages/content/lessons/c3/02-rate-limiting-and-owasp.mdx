@@ -1,0 +1,106 @@
+---
+chapter: C3
+slug: rate-limiting-and-owasp
+title: "Rate limiting, abuse and the OWASP Top 10"
+order: 2
+summary: "Authentication and validation are not enough: clients can still overload you or guess credentials. Rate limiting with a token bucket bounds abuse, and the OWASP Top 10 gives a checklist of what attackers actually exploit."
+objectives:
+  - Explain the token bucket and compute how many requests it allows
+  - Say why an in-memory limiter fails across several instances
+  - Recognise the main OWASP Top 10 categories and a defence for each
+  - Design limits per user, per IP and per endpoint
+concepts: [rate limiting, token bucket, "429", brute force, broken access control, SSRF, CSRF, security headers]
+reading:
+  - title: "OWASP Top 10"
+    url: "https://owasp.org/www-project-top-ten/"
+  - title: "IETF draft: RateLimit header fields"
+    url: "https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/"
+misconceptions:
+  - belief: "Rate limiting is only about stopping attackers."
+    correction: "It also protects you from buggy clients, retry loops and one heavy customer starving everyone else. It is a capacity-protection tool as much as a security one."
+  - belief: "The OWASP Top 10 is a list of exotic attacks."
+    correction: "It is a ranked list of common mistakes, led by broken access control (such as changing an id in the URL) and security misconfiguration. Most incidents are ordinary."
+---
+
+## Why it exists
+
+Even a correct, well-validated API can be hammered: a script guessing passwords, a client in a retry loop, a scraper. Limits keep one actor from consuming the shared capacity, and the Top 10 keeps you honest about the boring failures that cause most breaches.
+
+<Callout kind="why">
+Defence in depth: validation stops bad input, authorisation stops bad actors, limits stop bad volume. Each layer assumes the others can fail.
+</Callout>
+
+## How it works
+
+### The token bucket
+
+A bucket holds up to `capacity` tokens and refills at `rate` tokens per second. Each request takes one token; with none left the request is rejected with **429 Too Many Requests**. This allows short bursts (up to the capacity) while enforcing an average rate.
+
+```ts file=bucket.ts mark=3,4,5
+function bucket(rate: number, capacity: number) {
+  let tokens = capacity, last = 0;
+  return (now: number) => {
+    tokens = Math.min(capacity, tokens + (now - last) * rate);
+    last = now;
+    if (tokens >= 1) { tokens -= 1; return true; }
+    return false;
+  };
+}
+```
+
+With rate 5 per second and capacity 10, firing 100 requests in one second (100 per second): 14 were allowed (the 10 in the bucket plus the roughly 4 it refilled), and 86 were rejected. The bound is capacity plus rate times time.
+
+Alternatives: a **fixed window** counter (simple, but allows double the limit across a window boundary) and a **sliding window** (smoother, a bit more state).
+
+### Where state lives
+
+An in-process counter (the default in most rate-limit libraries) is per instance: with four instances behind a load balancer an attacker effectively gets four times the limit, and a restart resets it. For a real limit the state must be **shared**: a Redis `INCR` with an expiry is the classic, or a Postgres table when you want no extra infrastructure. A shared store must be fast and must decide what to do when it is down (fail open and risk abuse, or fail closed and risk an outage).
+
+### What to key on
+
+Per **user** or API key (fair, and survives shared IPs), per **IP** (needed before login, but many users share one IP behind a NAT), and per **endpoint** (login and password-reset are far more sensitive than reading a list). Return `Retry-After` so well-behaved clients can slow down.
+
+### The OWASP Top 10, as a checklist
+
+- **Broken access control**: check the owner on every object access (the IDOR from A4). Most common.
+- **Cryptographic failures**: TLS everywhere, slow password hashes, no secrets in URLs.
+- **Injection**: parameterised queries, the previous lesson.
+- **Insecure design and misconfiguration**: debug modes off, default credentials changed, minimal exposed surface, security headers.
+- **Vulnerable components**: scan and update dependencies.
+- **Authentication failures**: rate-limit logins, no user enumeration in error messages.
+- **Integrity failures and logging gaps**: verify what you deploy, log security events.
+- **SSRF** (server-side request forgery): when your server fetches a URL a user supplied, block internal addresses such as the cloud metadata endpoint.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Rate limiting only by IP behind a proxy without configuring trusted proxy headers: every request then appears to come from the proxy's address, so everyone shares one bucket, or the limit is trivially spoofed with an `X-Forwarded-For` header you should not trust.
+</Callout>
+
+- **Limits only in the web app**, not on the API behind it.
+- **Different error messages** for "no such user" and "wrong password", which enables enumeration.
+- **Counting only failures** so credential stuffing across many accounts slips through.
+- **Fail-open limiter** that silently disables protection during an outage of the shared store.
+- **Forgetting expensive endpoints** (search, export, AI) that need tighter limits.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Strict limits block abuse and also legitimate bursts (an office behind one IP). Shared state is accurate but adds a dependency and latency to every request; local limits are fast and approximate. Choose per endpoint and measure false positives.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Expose limit headers, monitor 429 rates by route and key, alert on sudden jumps in 401/403 and 429, keep an allow-list for trusted internal callers, and review the Top 10 against each service at design time and after major changes.
+</Callout>
+
+## Check yourself
+
+<Exercise id="rl-bucket" kind="predict" prompt="A token bucket has capacity 10 and refills 5 tokens per second. It starts full and 100 requests arrive within one second. About how many pass?" options={["5", "About 14", "50", "100"]} answer={1} explain="Ten tokens are available at once and about four more refill during that second, so roughly 14 pass and the rest get 429." />
+
+<Exercise id="rl-shared" kind="scenario" prompt="Your login limit is 5 attempts per minute, kept in each API instance's memory, and you run 4 instances. What can an attacker actually do?" options={["5 attempts per minute total", "About 20 attempts per minute, and a restart resets the counts", "Nothing", "Unlimited, always"]} answer={1} explain="Each instance counts separately, so the effective limit multiplies with the instance count. A shared store gives one global count." />
+
+<Exercise id="rl-owasp" kind="quiz" prompt="Changing /api/orders/17 to /api/orders/18 in the URL shows another user's order. Which category is this?" options={["Injection", "Broken access control", "Cryptographic failure", "Rate limiting"]} answer={1} explain="The server did not check that the order belongs to the caller. It is the most common category in the Top 10." />
+
+<Exercise id="rl-enum" kind="debug" prompt="Login returns 'no such user' for unknown emails and 'wrong password' for known ones. What is the problem?" options={["Nothing", "It reveals which emails are registered, enabling enumeration", "It is too slow", "It breaks sessions"]} answer={1} explain="Different messages let attackers discover valid accounts. Return one generic message and keep timing similar." />

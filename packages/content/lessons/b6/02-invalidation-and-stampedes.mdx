@@ -1,0 +1,111 @@
+---
+chapter: B6
+slug: invalidation-and-stampedes
+title: "Cache invalidation and stampedes"
+order: 2
+summary: "Keeping a cache correct is harder than filling it. Invalidate on write, expect races, and protect the database when a popular key expires and many requests miss at once."
+objectives:
+  - Describe why invalidation is hard and the race between a read and a write
+  - Explain the cache stampede and measure its effect
+  - Apply single-flight, jittered TTLs and stale-while-revalidate
+  - Decide when not to cache at all
+concepts: [invalidation, stampede, thundering herd, single-flight, jitter, stale-while-revalidate, write-through, race condition]
+reading:
+  - title: "Redis docs: Client-side caching and invalidation"
+    url: "https://redis.io/docs/latest/develop/clients/client-side-caching/"
+  - title: "Wikipedia: Cache stampede"
+    url: "https://en.wikipedia.org/wiki/Cache_stampede"
+misconceptions:
+  - belief: "Deleting the cache key after a database write keeps the cache always correct."
+    correction: "A reader that loaded the old value just before the write can store it just after your delete, leaving stale data until the TTL. Deletion narrows the window; the TTL is the safety net."
+  - belief: "A cache can only make a system faster."
+    correction: "When a hot key expires, every concurrent request misses and hits the database together. That stampede can be heavier than having no cache at all."
+---
+
+## Why it exists
+
+"There are only two hard things in computer science: cache invalidation and naming things." The joke lasts because correctness depends on *when* a cached copy stops being allowed to answer. And caches create a failure mode that did not exist before: the load of a hot key's expiry.
+
+<Callout kind="why">
+Every cache is a copy. Copies diverge. Your job is to decide how far they may drift, and what happens at the instant a popular copy disappears.
+</Callout>
+
+## How it works
+
+### Write strategies
+
+- **Cache-aside with delete-on-write**: update the database, delete the key. The next read refills it. Simple, and the usual default.
+- **Write-through**: write to cache and database together. Reads are always warm, writes cost more, and the two writes can still fail separately.
+- **Write-behind**: write to the cache and flush to the database later. Fast, but a crash can lose data. Rarely the right answer.
+
+### The invalidation race
+
+1. Reader misses, reads the old row from the database.
+2. Writer updates the row and deletes the cache key.
+3. Reader stores the old row in the cache.
+
+Now the cache holds stale data and nothing will clear it until the TTL. This is why every cached entry should have a TTL, even when you also invalidate, and why correctness-critical reads (checking a balance before a payment) should go to the database.
+
+### Stampede
+
+A popular key expires. In a test with 100 concurrent requests arriving while the key was missing, and a database call taking 50 ms:
+
+```text file=stampede.txt
+naive cache-aside:        100 concurrent misses -> 100 database calls
+single-flight:            100 concurrent misses ->   1 database call
+```
+
+**Single-flight** (also called request coalescing) lets the first miss do the work and makes the others await the same promise:
+
+```ts file=single-flight.ts mark=3,4,5
+const inflight = new Map<string, Promise<unknown>>();
+function load(key: string, fetch: () => Promise<unknown>) {
+  if (!inflight.has(key))
+    inflight.set(key, fetch().finally(() => inflight.delete(key)));
+  return inflight.get(key)!;
+}
+```
+
+This works within one process. Across many instances use a short Redis lock (`SET key lock NX PX 5000`) or serve **stale-while-revalidate**: return the expired value immediately while one request refreshes it in the background.
+
+### Jitter
+
+If a thousand keys are all cached with a 60-second TTL at startup, they all expire together. Add random jitter to each TTL (for example 60 s plus or minus 10 percent) so expiries spread out.
+
+### When not to cache
+
+Skip caching data that changes constantly, is rarely re-read, must be exactly correct (balances, inventory at checkout), or is cheap to compute. First fix the slow query with an index; a cache that hides a missing index only postpones the problem.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Relying on invalidation alone with no TTL. One missed delete in an error path and the wrong value lives forever.
+</Callout>
+
+- **Many keys with identical TTLs** that expire in a burst.
+- **Cold-start outages**: a deploy empties the cache and the database takes the full load. Warm it or ramp traffic.
+- **Caching a failure** (a timeout stored as "not found").
+- **Caching authorization-sensitive responses** without the user in the key.
+- **Using the cache as a lock or queue** without understanding its failure modes.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Single-flight and locks protect the database but add latency for waiters and failure cases (what if the winner crashes?). Stale-while-revalidate gives smooth latency at the cost of briefly serving old data. Pick based on how stale each endpoint may be.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Alert on a hit-rate drop and on database load spikes that follow cache restarts. Put a short timeout on cache calls and fall back to the database, so a slow cache does not become an outage. Rehearse a cold cache in load tests.
+</Callout>
+
+## Check yourself
+
+<Exercise id="stampede-count" kind="predict" prompt="A hot key expires and 100 requests arrive at once; each miss queries the database. Without protection, how many database queries run?" options={["1", "About 10", "100", "0"]} answer={2} explain="Every request misses and none knows the others are loading the same value, so all 100 query the database." />
+
+<Exercise id="stampede-fix" kind="quiz" prompt="What does single-flight do?" options={["Limits the cache to one key", "Lets the first miss load the value while other requests wait for that same result", "Deletes expired keys sooner", "Encrypts cache values"]} answer={1} explain="Concurrent requests for the same missing key share one in-flight load, so the database sees one query." />
+
+<Exercise id="inval-race" kind="debug" prompt="Right after a profile update the old name appears for ten minutes, though you delete the cache key on every write. What is the likely cause?" options={["A reader cached the old row just after your delete, so the stale value stays until its TTL", "Redis ignores DEL", "The database is wrong", "The TTL is too short"]} answer={0} explain="A read that began before the write can store its old result after the delete. A TTL bounds how long that stale copy survives." />
+
+<Exercise id="inval-jitter" kind="scenario" prompt="Ten thousand keys are all cached for exactly 60 seconds when the service starts. What happens a minute later?" options={["Nothing special", "They expire together and a wave of misses hits the database", "Redis crashes", "The keys never expire"]} answer={1} explain="Synchronised expiry causes a burst of misses. Random jitter on the TTL spreads them out." />

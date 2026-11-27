@@ -1,0 +1,105 @@
+---
+chapter: "0.3"
+slug: io-models-and-threads
+title: "Processes, threads and waiting for I/O"
+order: 1
+summary: A server spends most of its life waiting on disks and networks. How you wait, by blocking threads or by event notification, shapes everything about its design.
+objectives:
+  - Distinguish a process from a thread and say what they share
+  - Explain why blocking I/O wastes a thread while it waits
+  - Compare thread-per-request with an event-driven model
+  - Say when each model is the better choice
+concepts: [process, thread, blocking I/O, non-blocking I/O, context switch, concurrency]
+reading:
+  - title: "Node.js docs: Event loop, timers and nextTick"
+    url: "https://nodejs.org/en/learn/asynchronous-work/event-loop-timers-and-nexttick"
+misconceptions:
+  - belief: "Concurrency means things run at the same instant."
+    correction: "Concurrency means many tasks are in progress and make turns. Parallelism is running at the same instant on several cores. A single thread can be concurrent without being parallel."
+  - belief: "Single-threaded means slow."
+    correction: "A server is mostly waiting. One thread that never blocks while waiting can serve thousands of connections, because the waiting is done by the operating system."
+---
+
+## Why it exists
+
+A request to your backend usually does very little computing. It waits for the database, waits for another service, waits for a disk. If your program stops completely during each wait, one slow query freezes everyone behind it. Scaling a server is largely the art of **not wasting time while waiting**.
+
+<Callout kind="why">
+The question this lesson answers: what does your program do during the 20 ms it waits for the database?
+</Callout>
+
+## How it works
+
+### Process and thread
+
+A **process** is a running program with its own memory. A **thread** is a path of execution inside a process; threads of one process share its memory. Sharing is cheap and dangerous: two threads changing the same variable can corrupt it (chapter C5). Separate processes are isolated, which is safer but communication costs more.
+
+The operating system **schedules** threads onto CPU cores, switching between them. A switch (a **context switch**) saves one thread's registers and loads another's. It costs microseconds, plus cache misses afterwards. Cheap once, expensive at thousands per second.
+
+### Model 1: block the thread
+
+The simplest design: one thread per request. The code reads like a script, and when it calls the database the thread **blocks**: the OS parks it until the answer arrives.
+
+<Seq participants={["Thread A", "OS", "Database"]} messages={[
+  {"from":0,"to":2,"label":"query (thread A now blocked)"},
+  {"from":1,"to":0,"label":"parked: uses memory, does no work"},
+  {"from":2,"to":0,"label":"rows (thread A runnable again)"}
+]} />
+
+It is easy to reason about. The cost: each thread reserves stack memory (often around a megabyte of address space) and adds scheduling work. Ten thousand waiting connections means ten thousand parked threads.
+
+### Model 2: do not block, get notified
+
+Mark the socket **non-blocking** and ask the OS to tell you when any of many sockets is ready (epoll on Linux). One thread loops: take a ready event, run a small piece of code, go back. While the database works, that thread serves other requests.
+
+<Callout kind="note">
+This loop is exactly what you will see step by step in the Node.js event loop lab. Node runs your JavaScript on one thread, and the loop hands it work as the OS reports readiness.
+</Callout>
+
+```js file=two-requests.mjs mark=3,4
+import { readFile } from "node:fs/promises";
+
+const a = readFile("./a.txt"); // starts, does not block
+const b = readFile("./b.txt"); // starts immediately too
+console.log("both started");
+
+console.log((await a).length, (await b).length);
+```
+
+"both started" prints before either file arrives because the thread moved on. The cost of this model is that your code must never block the one thread, and the code style (callbacks, promises, `await`) is less linear.
+
+### What the single thread must never do
+
+A long loop of pure computing also blocks the loop: while it runs, no other request is served. The model works for waiting-heavy work and fails for CPU-heavy work, which you move to worker threads or other processes.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Calling a synchronous API such as `fs.readFileSync` or a heavy `JSON.parse` of a huge body inside a request handler. It looks harmless in testing and freezes every other connection under load.
+</Callout>
+
+- **Confusing concurrency with parallelism**, then expecting one Node process to use eight cores.
+- **Unbounded thread counts** in blocking designs, which exhaust memory under a traffic spike.
+- **Starting work and forgetting to await it**, so errors vanish and ordering breaks.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Thread-per-request is simple to write and debug but spends memory per waiting connection. Event-driven handles huge numbers of idle connections cheaply but demands that nothing blocks. Modern runtimes blur the line with lightweight threads, but the underlying trade remains.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Node services typically run one process per CPU core behind a load balancer or a process manager, because one process uses one core for JavaScript. CPU-heavy tasks go to worker threads or a separate service so the loop stays responsive. Teams monitor event-loop lag as a health signal.
+</Callout>
+
+## Check yourself
+
+<Exercise id="thread-vs-process" kind="quiz" prompt="What do two threads of the same process share?" options={["Nothing; they are isolated", "The process's memory", "Their CPU registers", "Their call stacks"]} answer={1} explain="Threads share the process's memory (heap), which is why sharing is easy and races are possible. Each thread has its own stack and registers." />
+
+<Exercise id="blocked-cost" kind="scenario" prompt="A blocking thread-per-request server has 10,000 idle connections each waiting on a slow upstream. What is the main resource being wasted?" options={["CPU cycles, because the waiting threads spin", "Memory and scheduling overhead for parked threads", "Network bandwidth", "Disk space"]} answer={1} explain="Parked threads do not use CPU, but each holds stack memory and adds scheduler bookkeeping. That is what limits connection count." />
+
+<Exercise id="print-order" kind="predict" prompt="In the readFile example, which prints first: the text 'both started', or the file lengths?" options={["The file lengths", "'both started'", "They print together", "It depends on the file size only"]} answer={1} explain="readFile returns a promise immediately. The synchronous console.log runs before the awaited results arrive." />
+
+<Exercise id="cpu-heavy" kind="debug" prompt="A Node endpoint computes a 2-second loop of pure arithmetic per request. During it other requests stall. What is the cause and the right fix?" options={["The database is slow; add an index", "The loop occupies the only JavaScript thread; move it to a worker thread or another service", "Node cannot handle HTTP; switch protocols", "The OS is out of memory"]} answer={1} explain="Pure computing never yields to the event loop, so nothing else runs on that thread. Offload CPU-heavy work to workers or other processes." />

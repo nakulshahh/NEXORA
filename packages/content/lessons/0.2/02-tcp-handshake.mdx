@@ -1,0 +1,97 @@
+---
+chapter: "0.2"
+slug: tcp-handshake
+title: TCP and the cost of a connection
+order: 2
+summary: How TCP turns an unreliable packet network into a reliable byte stream, and why opening a connection costs a full round trip before any data moves.
+objectives:
+  - Explain what TCP guarantees that raw IP packets do not
+  - Walk through the SYN, SYN-ACK, ACK handshake and say what each step establishes
+  - Estimate the latency cost of a new connection from the round-trip time
+  - Explain why keep-alive and connection pooling exist
+concepts: [TCP, handshake, RTT, byte stream, keep-alive, connection pooling]
+misconceptions:
+  - belief: "TCP preserves the boundaries of each write call."
+    correction: "TCP is a byte stream. Two writes can arrive as one read, and one write can arrive as several reads. Framing is the application's job."
+  - belief: "Once the handshake finishes, the data is safe from eavesdroppers."
+    correction: "TCP gives reliability and ordering, not secrecy. Confidentiality needs TLS on top."
+---
+
+## Why it exists
+
+IP delivers packets on a best-effort basis. They can be dropped, duplicated, delayed or reordered, and the network will not tell you. Almost every application wants something stronger: *bytes arrive, once, in order, or I find out*. **TCP** builds that guarantee on top of IP using sequence numbers, acknowledgements and retransmission.
+
+<Callout kind="why">
+TCP moves the hard problem (loss, reordering, congestion) out of every application and into one well-tested layer in the operating system kernel.
+</Callout>
+
+## How it works
+
+### The three-way handshake
+
+Before either side sends data, both must agree on starting **sequence numbers** and confirm the other is reachable.
+
+<Seq participants={["Client", "Server"]} messages={[
+  {"from":0,"to":1,"label":"SYN, seq=x"},
+  {"from":1,"to":0,"label":"SYN-ACK, seq=y, ack=x+1"},
+  {"from":0,"to":1,"label":"ACK, ack=y+1"},
+  {"from":0,"to":1,"label":"data (first request)"}
+]} />
+
+The client's first data can ride with, or right after, the final ACK. The key consequence: **one full round trip passes before the first byte of your request can be acted on.** With a 80 ms round trip to a server, every brand new connection costs about 80 ms before HTTP even starts.
+
+### A byte stream, not messages
+
+Once established, each side sees a continuous stream. The kernel splits it into segments however it likes. This tiny server makes the point:
+
+```js file=echo.mjs mark=5,6
+import net from "node:net";
+
+net.createServer((socket) => {
+  socket.on("data", (chunk) => {
+    // chunk boundaries are NOT your message boundaries
+    console.log("got", chunk.length, "bytes");
+    socket.write(chunk);
+  });
+}).listen(4000, () => console.log("listening on 4000"));
+```
+
+If a client writes `hello` and then `world` quickly, the server may log one chunk of 10 bytes, or two of 5, or 3 then 7. Protocols solve this with framing: a length prefix, a delimiter such as a newline, or a header that states the body length (which is exactly what HTTP does).
+
+### Loss and ordering
+
+Each segment carries a sequence number. The receiver acknowledges what it has received in order. If an acknowledgement does not arrive in time, or the sender sees duplicate ACKs, it retransmits. A lost segment therefore stalls everything behind it until it is recovered, a problem called **head-of-line blocking**.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Parsing a protocol by assuming one `data` event equals one message. It works on localhost and on your laptop, then fails under load or across a real network.
+</Callout>
+
+- **Opening a new connection per request** to the same host, paying the handshake every time.
+- **Ignoring errors and resets.** Connections end with `ECONNRESET`, timeouts and half-closes. Handle `error` and `close`.
+- **Forgetting timeouts.** A peer that vanishes without a FIN can leave your socket hanging for minutes by default.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Reliability and ordering cost latency: the handshake, retransmission waits and head-of-line blocking. UDP skips all of it and gives you raw datagrams, which is why real-time media, DNS queries and QUIC build their own rules on top of it.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Reuse connections. HTTP keep-alive, database connection pools and gRPC channels all exist to pay the handshake once and amortise it across many requests. Watch for ephemeral-port exhaustion and for pools sized larger than the server can accept.
+</Callout>
+
+A server also has a **listen backlog**: connections that finished the handshake but have not yet been accepted by your code. If your process is too slow at calling `accept`, that queue fills and new clients see timeouts, even though CPU looks idle.
+
+## Check yourself
+
+<Exercise id="handshake-rtt" kind="predict" prompt="The round-trip time to a server is 100 ms. You open a fresh TCP connection and send one small request. Roughly how long before the server can start processing the request (ignoring TLS)?" options={["About 0 ms", "About 50 ms", "About 100 ms for the handshake, then the request travels the remaining one-way trip", "About 300 ms"]} answer={2} explain="The handshake takes one full RTT (SYN out, SYN-ACK back). The client then sends its request, which needs another half RTT to arrive. Roughly 1.5 RTT in total before processing begins." />
+
+<Exercise id="byte-stream" kind="debug" prompt="A line-based chat server does `socket.on('data', c => handle(c.toString()))` and treats each chunk as one message. It works locally but sometimes merges or splits messages in production. What is the root cause?" options={["The network corrupts data", "TCP is a byte stream and does not preserve write boundaries, so the server must buffer and split on a delimiter", "Node.js has a bug in net", "The client needs to send messages more slowly"]} answer={1} explain="Chunk boundaries are arbitrary. Accumulate bytes in a buffer and extract complete messages by delimiter or length prefix." />
+
+<Exercise id="tcp-secrecy" kind="quiz" prompt="Which property does TCP itself provide?" options={["Encryption of the payload", "Authentication of the server", "Reliable, ordered delivery of a byte stream", "Guaranteed low latency"]} answer={2} explain="TCP gives reliability and ordering. Encryption and authentication come from TLS, and latency is bounded below by the speed of light plus handshakes." />
+
+<Exercise id="pooling-why" kind="scenario" prompt="Your service calls an internal API 500 times per second, each time with a brand new connection, and p99 latency is high even though the API is fast. What is the best first change?" options={["Add more CPU to the API", "Reuse connections with keep-alive or a pool", "Switch the payload to XML", "Lower the TTL on the DNS record"]} answer={1} explain="Each new connection pays at least one round trip for the handshake (more with TLS). Reusing connections removes that cost from almost every request." />

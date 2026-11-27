@@ -1,0 +1,1 @@
+{ "name": "@nexora/content", "version": "0.1.0", "private": true, "description": "Authored NEXORA lessons (MDX). Validated by apps/web/scripts/content.ts." }

@@ -1,0 +1,100 @@
+---
+chapter: "0.1"
+slug: anatomy-of-a-request
+title: "Anatomy of a request"
+order: 2
+summary: Follow one click from the browser to the database and back, and learn where the time goes. This is the map for the rest of the course.
+objectives:
+  - List the stages a request passes through, in order
+  - Say which stage each later chapter of this course explains
+  - Identify which stages are paid once per connection and which per request
+  - Estimate where latency is most likely to come from
+concepts: [request lifecycle, latency, round trip, connection reuse, trust boundary]
+reading:
+  - title: "MDN: How the web works"
+    url: "https://developer.mozilla.org/en-US/docs/Learn_web_development/Getting_started/Web_standards/How_the_Web_works"
+misconceptions:
+  - belief: "A request is slow because the server code is slow."
+    correction: "On a new connection, name lookup, TCP and TLS can cost several round trips before your code runs. Network distance often dominates server time."
+  - belief: "Each request goes through the same steps every time."
+    correction: "Caches and connection reuse remove whole stages. The same URL can take 3 round trips cold and a fraction of one warm."
+---
+
+## Why it exists
+
+Every later chapter zooms into one stage of a single journey. Without the map you learn facts that do not connect: DNS here, indexes there. This lesson draws the map once, so each new topic has a place to land.
+
+<Callout kind="why">
+Performance and failures are almost always located in one particular stage. Knowing the stages is how you stop guessing which one.
+</Callout>
+
+## How it works
+
+### The journey
+
+You click a link to `https://api.nexora.dev/users/42`. In order:
+
+1. **Resolve the name.** DNS turns `api.nexora.dev` into an IP address. See [Names, addresses and ports](/learn/foundations/0.2/names-and-addresses).
+2. **Open a connection.** TCP's handshake costs a round trip. See [TCP and the cost of a connection](/learn/foundations/0.2/tcp-handshake).
+3. **Secure it.** TLS agrees on keys and checks the server's certificate. See [TLS](/learn/foundations/0.2/tls).
+4. **Send the HTTP request.** Method, path, headers. See [HTTP as text on a socket](/learn/request-path/a1/http-messages).
+5. **Run your code.** Middleware, routing, validation, your handler.
+6. **Fetch state.** Often a cache, then a database.
+7. **Send the response** back over the same connection.
+
+<Sim id="http" />
+
+### What is paid once and what is paid every time
+
+Stages 1 to 3 belong to the **connection**. If the browser keeps the connection open and reuses it, a second request skips them. Stages 4 to 7 belong to the **request** and are paid every time. Try it above: switch the connection to Keep-alive and the DNS cache to Warm, and watch the total fall.
+
+### Where the time usually goes
+
+Distance sets a floor. A round trip to a server 8,000 km away takes at least about 55 ms in fibre (light travels roughly two thirds of its vacuum speed), whatever your code does. A cold HTTPS request can need several of them. After that, the typical order of cost is: database work, then network, then your own code, though it varies.
+
+<Seq participants={["Browser", "Server", "Cache", "Database"]} messages={[
+  {"from":0,"to":1,"label":"GET /users/42"},
+  {"from":1,"to":2,"label":"cached user:42?"},
+  {"from":2,"to":1,"label":"miss"},
+  {"from":1,"to":3,"label":"SELECT ... WHERE id = 42"},
+  {"from":3,"to":1,"label":"row"},
+  {"from":1,"to":0,"label":"200 + JSON"}
+]} />
+
+### Trust boundaries along the way
+
+Everything left of your server is outside your control: the client, the network, even the headers. Everything you do first inside the server should treat input as untrusted. That boundary is why validation (chapter A5) and authentication (chapter A4) sit at the edge of your code.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Optimising code before measuring. Teams spend days speeding up a handler that accounts for 3 ms of a 400 ms request, while a missing keep-alive or an uncached lookup costs far more.
+</Callout>
+
+- **Ignoring distance.** Putting the server in one region and users in another adds round trips you cannot optimise away in code.
+- **Treating the database as free.** One request that makes ten sequential queries pays ten round trips to the database.
+- **Forgetting the first request is special.** Load tests that reuse one connection hide the handshake cost real users pay.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Each stage you remove or shorten (caching, connection reuse, edge servers) buys speed at the price of staleness, complexity or cost. A cache makes reads fast and makes data possibly out of date. Choose which stage to shorten based on a measurement, not a habit.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Teams record timing per stage: DNS, connect, TLS, time to first byte, total. When a page feels slow, the breakdown tells you which stage to investigate. Browser developer tools show the same breakdown for any request in the Network tab (the Timing view).
+</Callout>
+
+Percentiles matter more than averages. If 1 request in 100 takes ten times longer, the average barely moves, but a user who makes twenty requests per page will often hit one of the slow ones.
+
+## Check yourself
+
+<Exercise id="conn-vs-req" kind="quiz" prompt="Which stages can be skipped on a second request when the connection is reused?" options={["Routing and your handler", "DNS lookup, TCP handshake and TLS handshake", "The database query", "Sending the response"]} answer={1} explain="Name resolution and the TCP and TLS handshakes belong to the connection. Reuse them and only the per-request stages remain." />
+
+<Exercise id="floor-latency" kind="predict" prompt="The server is very far away; a single network round trip takes 100 ms. A brand new HTTPS connection (TCP then TLS 1.3) is opened and the request sent. Roughly how long before the server begins to process the request, ignoring DNS?" options={["About 50 ms", "About 100 ms", "About 250 ms", "About 1,000 ms"]} answer={2} explain="TCP takes one round trip (100 ms), TLS 1.3 one more (100 ms), then the request needs half a round trip to arrive (50 ms): about 250 ms before your code even starts." />
+
+<Exercise id="measure-first" kind="scenario" prompt="Users in another continent report that your API feels slow. Your handler takes 4 ms. What should you check first?" options={["Rewrite the handler in a faster language", "The timing breakdown: DNS, connect, TLS and time to first byte for those users", "Add more CPU cores", "Compress the JSON harder"]} answer={1} explain="With a 4 ms handler, the time is almost certainly in distance and connection setup. Measure the stages before changing code." />
+
+<Exercise id="n-plus-one-hint" kind="debug" prompt="One endpoint loads a list of 50 posts, then runs a separate database query for each author. It is slow even though each query takes 1 ms. Which description explains it?" options={["The database is broken", "Fifty sequential round trips to the database add up; the work should be batched", "JSON is slow to parse", "TLS is misconfigured"]} answer={1} explain="Each query pays a round trip plus execution. Fifty of them in sequence cost far more than one query that fetches all authors together." />

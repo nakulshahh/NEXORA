@@ -1,0 +1,38 @@
+# dependencies and build output
+node_modules
+.next
+dist
+out
+*.tsbuildinfo
+next-env.d.ts
+
+# secrets: never commit these. Only *.example files are tracked.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.vercel
+
+# local noise
+.shots
+*.log
+.DS_Store
+coverage
+
+# Python
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+
+# database dumps contain emails and password hashes
+backups/
+*.dump
+
+# Tests and test automation
+apps/api/tests/
+apps/ai/tests/
+apps/web/tests/
+apps/web/e2e/
+scripts/loadtest.mjs

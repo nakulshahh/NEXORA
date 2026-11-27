@@ -1,0 +1,104 @@
+---
+chapter: A2
+slug: order-specificity-and-edge-cases
+title: "Order, specificity and edge cases"
+order: 2
+summary: "When two routes could match, one wins, and the rule is usually registration order. Learn the cases that cause real bugs: shadowed routes, trailing slashes, case, and unknown methods."
+objectives:
+  - Predict which of two overlapping routes wins
+  - Order routes so specific ones are not shadowed
+  - State how Express treats trailing slashes, case and unmatched methods by default
+  - Choose a deliberate policy for each edge case
+concepts: [route order, shadowing, specificity, trailing slash, case sensitivity, canonical URL]
+reading:
+  - title: "Express: Routing (route paths)"
+    url: "https://expressjs.com/en/guide/routing.html"
+misconceptions:
+  - belief: "The most specific route always wins."
+    correction: "In most frameworks the first matching route wins. /users/:id registered before /users/me swallows /users/me, with id equal to me."
+  - belief: "Express answers 405 for a wrong method automatically."
+    correction: "By default Express answers 404 when no route matches the method. If you want 405 with an Allow header you must add it."
+---
+
+## Why it exists
+
+Real route tables overlap. `/users/me` is a specific page; `/users/:id` is the general case. Both match `/users/me`. Something must break the tie, and if you do not know the rule, you get bugs where the wrong handler runs and everything looks fine in tests that use the other URL.
+
+<Callout kind="why">
+Overlaps are normal. The tie-break rule is part of your API's behaviour, so you should know it and test it.
+</Callout>
+
+## How it works
+
+### First match wins
+
+A router walks its list in registration order and stops at the first route that fits. So specific routes go first:
+
+```js file=order.mjs mark=3,4
+import express from "express";
+const app = express();
+app.get("/users/me", (req, res) => res.send("me"));   // specific first
+app.get("/users/:id", (req, res) => res.send(`user ${req.params.id}`));
+```
+
+Swap those two lines and a request for `/users/me` is answered by the general route with `id` equal to `"me"`. I ran this in Express 5 to check: the swapped order returns `param:me`. This is called **shadowing**.
+
+### Edge cases and what Express does by default
+
+| Request | Express 5 default | Why it matters |
+|---|---|---|
+| `GET /users/42/` (trailing slash) | Matches `/users/:id` | Two URLs serve one resource unless you redirect |
+| `GET /Users/42` (different case) | Matches | Same: duplicates for caches and search engines |
+| `POST /users/42` (no such route) | 404 | A 405 with an Allow header would be more helpful |
+| `GET /users/a%2Fb` | id is `a/b` | Decoded value can contain a slash |
+
+All four were checked against a running Express 5 server. Frameworks differ, so check yours instead of assuming.
+
+### Choose a policy, then enforce it
+
+A **canonical URL** is the one agreed spelling. Pick one (for example lower case, no trailing slash), and redirect the others with a 301 or reject them. Otherwise caches store several copies, analytics split, and an authorisation rule written for one spelling might not apply to another.
+
+<Seq participants={["Client", "Server"]} messages={[
+  {"from":0,"to":1,"label":"GET /Users/42/"},
+  {"from":1,"to":0,"label":"301 Location: /users/42"},
+  {"from":0,"to":1,"label":"GET /users/42"},
+  {"from":1,"to":0,"label":"200"}
+]} />
+
+### Where it bites security
+
+Authorisation often hangs off a path prefix, such as "everything under /admin needs an admin". If the router treats `/admin` and `/ADMIN/` as the same route but the guard compares exact strings, one spelling slips past. Put access checks on the router or the handler, not on string comparisons of the raw URL.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Registering the general route first. Everything works for ids, and the one special word, such as me, never reaches its handler. Put specific routes before parameterised ones, and add a test for each special word.
+</Callout>
+
+- **Prefix checks on raw paths** for authorisation, which differ on case, slashes and encoding.
+- **A catch-all (`*`) registered early**, which hides every route after it.
+- **No fallback**, so unknown paths return a framework HTML page instead of your JSON error.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Being lenient (accepting trailing slashes and any case) is friendly to humans, but creates duplicate URLs and subtle security gaps. Being strict is safer and cacheable, but breaks sloppy clients. Many APIs choose strict plus a redirect from the common mistakes.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Teams keep a test that lists every route with a few awkward URLs (trailing slash, upper case, encoded slash, wrong method) and asserts the exact status code. It documents the policy and catches a framework upgrade that changes a default.
+</Callout>
+
+A final JSON 404 handler and an error handler close the table, so every unknown path gets a consistent, machine-readable answer.
+
+## Check yourself
+
+<Exercise id="order-me" kind="predict" prompt="Express routes registered in this order: GET /users/:id, then GET /users/me. What does GET /users/me return?" options={["The handler for /users/me", "The /users/:id handler with id equal to me", "404", "405"]} answer={1} explain="First match wins. The parameterised route is first and matches the text me, so the specific route is never reached." />
+
+<Exercise id="order-fix" kind="debug" prompt="Your /health route never runs; every request to it returns 404 JSON from app.get('*'). What is wrong?" options={["Health checks need POST", "The catch-all * was registered before /health", "The path is too short", "Express does not support GET"]} answer={1} explain="The catch-all matches everything and stops the search. Specific routes must be registered before it." />
+
+<Exercise id="order-canonical" kind="scenario" prompt="Both /products/9 and /products/9/ return 200 with identical content. Why might that hurt, and what is a fix?" options={["Nothing, it is fine", "Caches and search engines treat them as two pages; redirect one form to the other with a 301", "It is faster, so keep it", "It breaks TLS"]} answer={1} explain="Two URLs for one resource split caches and analytics, and complicate access rules. Choose a canonical form and redirect the rest." />
+
+<Exercise id="order-405" kind="quiz" prompt="By default, what does Express return for POST on a path that only has a GET route?" options={["405 with Allow", "404", "200", "301"]} answer={1} explain="Express does not synthesize 405 for you. Add it deliberately if you want clients to get an Allow header." />

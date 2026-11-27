@@ -1,0 +1,3399 @@
+[
+ {
+  "chapter": "0.1",
+  "slug": "what-a-backend-is",
+  "title": "What a backend actually is",
+  "order": 1,
+  "summary": "A backend is a program that waits for requests, applies rules to shared state, and answers. Everything else, frameworks included, is detail around that loop.",
+  "minutes": 7,
+  "objectives": [
+   "Describe the client, server and request-response model in your own words",
+   "Name the three things a backend owns that a client cannot be trusted with",
+   "Explain why a server is a long-running program rather than a script",
+   "Tell apart the application, the framework and the runtime"
+  ],
+  "exercises": [
+   "who-trusts",
+   "visits-restart",
+   "two-copies",
+   "framework-vs-backend"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "0.1",
+  "slug": "anatomy-of-a-request",
+  "title": "Anatomy of a request",
+  "order": 2,
+  "summary": "Follow one click from the browser to the database and back, and learn where the time goes. This is the map for the rest of the course.",
+  "minutes": 6,
+  "objectives": [
+   "List the stages a request passes through, in order",
+   "Say which stage each later chapter of this course explains",
+   "Identify which stages are paid once per connection and which per request",
+   "Estimate where latency is most likely to come from"
+  ],
+  "exercises": [
+   "conn-vs-req",
+   "floor-latency",
+   "measure-first",
+   "n-plus-one-hint"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "0.2",
+  "slug": "names-and-addresses",
+  "title": "Names, addresses and ports",
+  "order": 1,
+  "summary": "How a hostname becomes an IP address, and how an IP address plus a port becomes a specific program on a specific machine.",
+  "minutes": 6,
+  "objectives": [
+   "Explain what an IP address, a port and a socket each identify",
+   "Trace a DNS lookup through resolver, root, TLD and authoritative servers",
+   "Predict when a cached answer is used and when it expires",
+   "Distinguish dns.lookup from dns.resolve4 in Node.js"
+  ],
+  "exercises": [
+   "ports-identify",
+   "ttl-cache",
+   "lookup-vs-resolve",
+   "host-vs-ip"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "0.2",
+  "slug": "tcp-handshake",
+  "title": "TCP and the cost of a connection",
+  "order": 2,
+  "summary": "How TCP turns an unreliable packet network into a reliable byte stream, and why opening a connection costs a full round trip before any data moves.",
+  "minutes": 6,
+  "objectives": [
+   "Explain what TCP guarantees that raw IP packets do not",
+   "Walk through the SYN, SYN-ACK, ACK handshake and say what each step establishes",
+   "Estimate the latency cost of a new connection from the round-trip time",
+   "Explain why keep-alive and connection pooling exist"
+  ],
+  "exercises": [
+   "handshake-rtt",
+   "byte-stream",
+   "tcp-secrecy",
+   "pooling-why"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "0.2",
+  "slug": "tls",
+  "title": "TLS: confidentiality, integrity, identity",
+  "order": 3,
+  "summary": "What TLS actually protects, how the handshake establishes a shared secret with a server you can verify, and what it deliberately does not hide.",
+  "minutes": 6,
+  "objectives": [
+   "State the three guarantees TLS provides",
+   "Describe the TLS 1.3 handshake at the level of what is agreed and proven",
+   "Explain how a certificate chain lets a client trust a server it has never met",
+   "List what remains visible to a network observer even with TLS"
+  ],
+  "exercises": [
+   "tls-three",
+   "tls-visible",
+   "reject-unauth",
+   "tls-incomplete-chain"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "0.3",
+  "slug": "io-models-and-threads",
+  "title": "Processes, threads and waiting for I/O",
+  "order": 1,
+  "summary": "A server spends most of its life waiting on disks and networks. How you wait, by blocking threads or by event notification, shapes everything about its design.",
+  "minutes": 6,
+  "objectives": [
+   "Distinguish a process from a thread and say what they share",
+   "Explain why blocking I/O wastes a thread while it waits",
+   "Compare thread-per-request with an event-driven model",
+   "Say when each model is the better choice"
+  ],
+  "exercises": [
+   "thread-vs-process",
+   "blocked-cost",
+   "print-order",
+   "cpu-heavy"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "0.3",
+  "slug": "the-node-event-loop",
+  "title": "The Node.js event loop, step by step",
+  "order": 2,
+  "summary": "Microtasks, timers and I/O callbacks run in a fixed order. Learn the order, predict it, then check your prediction in the lab.",
+  "minutes": 6,
+  "objectives": [
+   "State the order: synchronous code, nextTick, microtasks, then loop phases",
+   "Predict the output of a program mixing promises, timers and immediates",
+   "Explain why setTimeout(0) is not immediate",
+   "Recognise which orderings are guaranteed and which are not"
+  ],
+  "exercises": [
+   "order-basic",
+   "await-order",
+   "starve",
+   "io-order"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "0.4",
+  "slug": "processes-signals-and-exit-codes",
+  "title": "Processes, signals and exit codes",
+  "order": 1,
+  "summary": "A backend is a process. The operating system starts it, tells it to stop with signals, and reads its exit code to learn how it ended. Knowing this makes deploys, crashes and containers much less mysterious.",
+  "minutes": 6,
+  "objectives": [
+   "Explain a process, its environment and its file descriptors",
+   "Distinguish SIGTERM from SIGKILL and say which can be handled",
+   "Read exit codes, including the 128 plus signal convention",
+   "Use pipes and set -o pipefail so scripts do not hide failures"
+  ],
+  "exercises": [
+   "os-sigkill",
+   "os-exit",
+   "os-pipe",
+   "os-exec"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "0.4",
+  "slug": "files-permissions-and-the-dev-environment",
+  "title": "Files, permissions and a reproducible dev environment",
+  "order": 2,
+  "summary": "Everything on Linux is a file with an owner and permission bits. Learning to read permissions, inspect running processes and write down the setup makes bugs reproducible and deployments dull.",
+  "minutes": 7,
+  "objectives": [
+   "Read and set Unix permission bits and understand umask",
+   "Inspect a running system with ps, lsof, ss and strace",
+   "Explain why services should not run as root",
+   "Make a development setup reproducible with a lockfile, a version pin and a script"
+  ],
+  "exercises": [
+   "fs-mode",
+   "fs-port",
+   "fs-root",
+   "fs-repro"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "A1",
+  "slug": "http-messages",
+  "title": "HTTP as text on a socket",
+  "order": 1,
+  "summary": "An HTTP message is just structured text carried over TCP. Read one by hand, parse one by hand, then see what the framework does for you.",
+  "minutes": 6,
+  "objectives": [
+   "Identify the parts of an HTTP request and response message",
+   "Explain why HTTP is called stateless and what that implies for design",
+   "Parse a raw request from a TCP socket without a framework",
+   "Describe how the body length is communicated"
+  ],
+  "exercises": [
+   "http-parts",
+   "content-length-bytes",
+   "stateless-scale",
+   "chunk-debug"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "A1",
+  "slug": "methods-status-headers",
+  "title": "Methods, status codes and the headers that matter",
+  "order": 2,
+  "summary": "The vocabulary of HTTP semantics: which methods are safe or idempotent, what the status families promise, and how conditional requests save bandwidth.",
+  "minutes": 6,
+  "objectives": [
+   "Choose a method based on whether it is safe and idempotent",
+   "Pick an accurate status code family for a given outcome",
+   "Explain how ETag and If-None-Match produce a 304 response",
+   "Recognise the headers that control content type, caching and authorization"
+  ],
+  "exercises": [
+   "idempotent-pick",
+   "status-pick",
+   "etag-predict",
+   "get-sideeffect"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "A1",
+  "slug": "cors",
+  "title": "CORS: why browsers police cross-origin calls",
+  "order": 3,
+  "summary": "The same-origin policy protects users from hostile pages; CORS is the controlled opening in it. Learn what actually blocks the request, and what your server must send to allow it.",
+  "minutes": 6,
+  "objectives": [
+   "Define an origin and decide whether two URLs are same-origin",
+   "Explain the same-origin policy and the threat it prevents",
+   "Distinguish a simple request from a preflighted one",
+   "Configure the correct response headers, including the credentials rule"
+  ],
+  "exercises": [
+   "same-origin",
+   "cors-not-security",
+   "preflight-predict",
+   "creds-wildcard"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "A2",
+  "slug": "routes-are-a-table",
+  "title": "Routes are a lookup table",
+  "order": 1,
+  "summary": "Routing is matching a method and a path against a list of patterns and calling the first handler that fits. Build a tiny router and the framework stops being magic.",
+  "minutes": 6,
+  "objectives": [
+   "Describe routing as a search over (method, path pattern) pairs",
+   "Explain how path parameters are extracted from a URL",
+   "Write a minimal router and predict which route it picks",
+   "Distinguish 404 Not Found from 405 Method Not Allowed"
+  ],
+  "exercises": [
+   "routes-params",
+   "routes-405",
+   "routes-decode",
+   "routes-metrics"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "A2",
+  "slug": "order-specificity-and-edge-cases",
+  "title": "Order, specificity and edge cases",
+  "order": 2,
+  "summary": "When two routes could match, one wins, and the rule is usually registration order. Learn the cases that cause real bugs: shadowed routes, trailing slashes, case, and unknown methods.",
+  "minutes": 6,
+  "objectives": [
+   "Predict which of two overlapping routes wins",
+   "Order routes so specific ones are not shadowed",
+   "State how Express treats trailing slashes, case and unmatched methods by default",
+   "Choose a deliberate policy for each edge case"
+  ],
+  "exercises": [
+   "order-me",
+   "order-fix",
+   "order-canonical",
+   "order-405"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "A3",
+  "slug": "text-bytes-and-json",
+  "title": "Text, bytes and JSON",
+  "order": 1,
+  "summary": "Networks carry bytes, not strings or objects. Know how UTF-8 turns characters into bytes and what JSON can and cannot represent, before it silently corrupts your data.",
+  "minutes": 6,
+  "objectives": [
+   "Distinguish characters, code units and bytes, and count each",
+   "Explain why Content-Length counts bytes",
+   "List values JSON cannot represent faithfully",
+   "Handle large integers and dates safely across a JSON boundary"
+  ],
+  "exercises": [
+   "bytes-length",
+   "bigint-id",
+   "json-undefined",
+   "money-float"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "A3",
+  "slug": "binary-formats-and-schemas",
+  "title": "Binary formats, schemas and compatibility",
+  "order": 2,
+  "summary": "Protocol Buffers pack data into a few bytes using a schema, with field numbers instead of names. See the exact bytes, then learn the rules that let old and new services keep talking.",
+  "minutes": 6,
+  "objectives": [
+   "Explain how a varint stores an integer in a variable number of bytes",
+   "Decode a small Protocol Buffers message by hand",
+   "State which schema changes are safe and which break old readers",
+   "Decide when JSON is enough and when a binary format earns its complexity"
+  ],
+  "exercises": [
+   "varint-size",
+   "pb-decode",
+   "pb-evolve",
+   "pb-when"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "A4",
+  "slug": "passwords-and-sessions",
+  "title": "Passwords and server-side sessions",
+  "order": 1,
+  "summary": "Authentication answers who you are. Store passwords as salted slow hashes, then remember the login with a random session id the server can revoke.",
+  "minutes": 6,
+  "objectives": [
+   "Separate authentication from authorization",
+   "Explain why passwords are hashed with a salt and a deliberately slow function",
+   "Describe how a session cookie turns a stateless protocol into a login",
+   "Name the cookie flags that matter and what each defends against"
+  ],
+  "exercises": [
+   "authn-vs-authz",
+   "why-slow-hash",
+   "cookie-uid",
+   "revoke"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "A4",
+  "slug": "tokens-and-authorization",
+  "title": "JWTs, trade-offs and authorization",
+  "order": 2,
+  "summary": "A signed token proves identity without a lookup, at the cost of easy revocation. Then comes the check that matters most: may this user do this to that object?",
+  "minutes": 7,
+  "objectives": [
+   "Describe what a JWT contains and what its signature guarantees",
+   "Explain why a signed token is not secret and is hard to revoke",
+   "Compare sessions and JWTs honestly",
+   "Apply role and ownership checks on the server for every protected action"
+  ],
+  "exercises": [
+   "jwt-secret",
+   "jwt-revoke",
+   "idor",
+   "when-jwt",
+   "alg-none"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "A5",
+  "slug": "never-trust-input",
+  "title": "Never trust input: validate at the edge",
+  "order": 1,
+  "summary": "Everything that crosses your boundary is attacker-controlled text. Check its shape once, at the edge, and let only a known-good value into the rest of the program.",
+  "minutes": 6,
+  "objectives": [
+   "Explain why client-side checks never replace server-side validation",
+   "Distinguish validating (accept or reject) from sanitising (alter) and escaping (encode for an output)",
+   "Write a parser that returns a clean value or a list of field errors",
+   "Prevent mass assignment by choosing fields explicitly"
+  ],
+  "exercises": [
+   "validate-client-side",
+   "validate-predict-string-age",
+   "validate-mass-assignment",
+   "validate-vs-escape"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "A5",
+  "slug": "coercion-and-error-shapes",
+  "title": "Coercion, defaults and error responses",
+  "order": 2,
+  "summary": "Query strings are always text and JSON is loosely typed. Convert deliberately, apply defaults in one place, and answer bad input with a clear, consistent 400.",
+  "minutes": 6,
+  "objectives": [
+   "Explain why query-string values arrive as strings and convert them explicitly",
+   "Predict the surprising results of Number, parseInt and unary plus on odd inputs",
+   "Handle repeated parameters and unknown fields on purpose",
+   "Design an error response that clients can act on without leaking internals"
+  ],
+  "exercises": [
+   "coerce-predict-empty",
+   "coerce-predict-parseint",
+   "coerce-default-or",
+   "coerce-error-status"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "A6",
+  "slug": "controllers-services-repositories",
+  "title": "Layers: controllers, services and repositories",
+  "order": 1,
+  "summary": "Split a handler into three jobs: translate HTTP, apply business rules, and talk to storage. The split is what lets you test rules without a server and swap storage without rewriting rules.",
+  "minutes": 6,
+  "objectives": [
+   "Describe what belongs in a controller, a service and a repository",
+   "Keep HTTP details out of business rules and SQL out of controllers",
+   "Map domain errors to HTTP statuses in one place",
+   "Judge when layering helps and when it is ceremony"
+  ],
+  "exercises": [
+   "layers-where-rule",
+   "layers-predict-status",
+   "layers-req-in-service",
+   "layers-when-skip"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "A6",
+  "slug": "middleware",
+  "title": "Middleware: a pipeline around your handler",
+  "order": 2,
+  "summary": "Middleware is a chain of functions that each see the request, then either pass it along or answer it. Order is behaviour: the same functions in a different order do a different job.",
+  "minutes": 6,
+  "objectives": [
+   "Model middleware as a chain where each function receives a next callback",
+   "Predict execution order, including what runs after next returns",
+   "Explain short-circuiting and why authentication runs before handlers",
+   "Route errors to one central handler"
+  ],
+  "exercises": [
+   "mw-predict-order",
+   "mw-no-next",
+   "mw-order-auth",
+   "mw-module-state"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "A7",
+  "slug": "resources-methods-idempotency",
+  "title": "REST in practice: resources, status codes and idempotency",
+  "order": 1,
+  "summary": "Design an API around nouns and the HTTP verbs that act on them, answer with honest status codes, and make unsafe operations safe to retry with idempotency keys.",
+  "minutes": 7,
+  "objectives": [
+   "Model an API as resources identified by URLs and manipulated with standard methods",
+   "Choose between POST, PUT and PATCH and between 200, 201, 204, 400, 404, 409 and 422",
+   "Define safe and idempotent methods and why retries depend on them",
+   "Use an idempotency key to make a POST safe to repeat"
+  ],
+  "exercises": [
+   "rest-idem-which",
+   "rest-status-create",
+   "rest-retry-payment",
+   "rest-get-delete"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "A7",
+  "slug": "pagination-filtering-versioning",
+  "title": "Pagination, filtering and versioning",
+  "order": 2,
+  "summary": "Never return an unbounded list. Offset pages are simple but skip and repeat rows when data changes; cursor pages stay stable and fast. Version the contract so change does not break clients.",
+  "minutes": 7,
+  "objectives": [
+   "Explain why list endpoints must be bounded and paginated",
+   "Compare offset and cursor (keyset) pagination, including the cost and the consistency problem",
+   "Design filtering and sorting parameters with an allow-list",
+   "Choose a versioning approach and know which changes are breaking"
+  ],
+  "exercises": [
+   "page-offset-skip",
+   "page-why-keyset-fast",
+   "page-sort-sql",
+   "page-breaking"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "B1",
+  "slug": "pages-wal-and-mvcc",
+  "title": "Inside a database: pages, the write-ahead log and row versions",
+  "order": 1,
+  "summary": "A relational database stores rows in fixed-size pages, logs every change before applying it so a crash cannot lose committed work, and keeps old row versions so readers do not block writers.",
+  "minutes": 7,
+  "objectives": [
+   "Describe a heap table as a sequence of fixed-size pages holding row versions",
+   "Explain what the write-ahead log is and why commit waits for it",
+   "Show that an UPDATE creates a new row version rather than overwriting",
+   "Connect page reads to the cost of a full table scan"
+  ],
+  "exercises": [
+   "pages-unit",
+   "pages-wal-order",
+   "pages-update-ctid",
+   "pages-bloat"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "B1",
+  "slug": "connection-pools",
+  "title": "Connections and connection pools",
+  "order": 2,
+  "summary": "Each database connection is a costly, limited resource. A pool reuses a small fixed set of them and queues the rest, which is faster and protects the database from being overwhelmed.",
+  "minutes": 6,
+  "objectives": [
+   "Explain why opening a connection per request is slow and does not scale",
+   "Describe how a pool lends, returns and queues work",
+   "Predict completion times when concurrent queries outnumber pooled connections",
+   "Size a pool against the database's connection limit and the number of app instances"
+  ],
+  "exercises": [
+   "pool-why",
+   "pool-predict-queue",
+   "pool-leak",
+   "pool-sizing"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "B10",
+  "slug": "grpc-and-protobuf",
+  "title": "gRPC and Protocol Buffers: typed service-to-service calls",
+  "order": 1,
+  "summary": "gRPC runs typed remote calls over HTTP/2 with Protocol Buffers encoding. Messages are compact binary with field numbers instead of names, which saves bytes and makes the contract explicit, at the cost of readability and browser support.",
+  "minutes": 6,
+  "objectives": [
+   "Explain what a .proto contract defines and what gRPC adds on top",
+   "Work out a small protobuf message at the byte level, including varints",
+   "Compare gRPC with JSON over REST for internal services",
+   "Evolve a schema without breaking old clients"
+  ],
+  "exercises": [
+   "grpc-names",
+   "grpc-varint",
+   "grpc-evolve",
+   "grpc-choose"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "B11",
+  "slug": "configuration-and-secrets",
+  "title": "Configuration, environments and secrets",
+  "order": 1,
+  "summary": "Configuration that changes between environments belongs outside the code, validated at startup so a bad value fails immediately. Secrets need stricter handling than other configuration: never committed, never logged, and rotatable.",
+  "minutes": 6,
+  "objectives": [
+   "Separate code from per-environment configuration using environment variables",
+   "Validate configuration once at startup and fail fast with a clear message",
+   "Treat secrets differently: storage, scope, rotation and leak response",
+   "Avoid configuration drift between development, staging and production"
+  ],
+  "exercises": [
+   "cfg-failfast",
+   "cfg-leak",
+   "cfg-env",
+   "cfg-sep"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "B2",
+  "slug": "tables-keys-and-joins",
+  "title": "Tables, keys, constraints and joins",
+  "order": 1,
+  "summary": "The relational model stores facts in tables, links them with keys, and lets the database enforce rules with constraints. Joins recombine the pieces, and NULL behaves in ways that surprise everyone once.",
+  "minutes": 6,
+  "objectives": [
+   "Explain primary keys, foreign keys and why constraints belong in the database",
+   "Write inner and left joins and predict which rows each returns",
+   "Describe NULL's three-valued logic and the NOT IN trap",
+   "Know the difference between COUNT(*) and COUNT(column)"
+  ],
+  "exercises": [
+   "sql-left-join",
+   "sql-null-in",
+   "sql-count",
+   "sql-constraint-where"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "B2",
+  "slug": "normalisation-and-migrations",
+  "title": "Normalisation and safe schema migrations",
+  "order": 2,
+  "summary": "Normalising stores each fact once so updates cannot contradict each other. Schemas change over time, so migrations must be versioned, repeatable and safe to run while traffic continues.",
+  "minutes": 6,
+  "objectives": [
+   "Spot update, insert and delete anomalies in a denormalised table",
+   "Normalise a table by moving repeated facts into their own table",
+   "Explain why migrations are versioned files and never edited after release",
+   "Apply the expand and contract pattern to rename a column without downtime"
+  ],
+  "exercises": [
+   "norm-anomaly",
+   "mig-edit",
+   "mig-rename",
+   "mig-order"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "B3",
+  "slug": "btree-indexes",
+  "title": "B-tree indexes: from a full scan to a handful of page reads",
+  "order": 1,
+  "summary": "A B-tree index is a sorted, shallow tree that finds a value in a few page reads instead of scanning the whole table. It costs space and write time, and only helps when queries can use it.",
+  "minutes": 7,
+  "objectives": [
+   "Explain why a sequential scan is O(pages) and a B-tree lookup is O(log n)",
+   "Measure the effect of an index and read its size against the table",
+   "Say when an index does not help, including leading wildcards and low selectivity",
+   "Use composite indexes to serve both a filter and an ordering"
+  ],
+  "exercises": [
+   "idx-why-fast",
+   "idx-wildcard",
+   "idx-selectivity",
+   "idx-composite"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "B3",
+  "slug": "reading-explain",
+  "title": "Reading EXPLAIN: how to see what the database actually does",
+  "order": 2,
+  "summary": "EXPLAIN shows the plan the database chose; EXPLAIN ANALYZE runs it and reports real timings and row counts. Learning to read these is how you replace guessing about slow queries with evidence.",
+  "minutes": 6,
+  "objectives": [
+   "Tell EXPLAIN (estimates) apart from EXPLAIN ANALYZE (actual execution)",
+   "Identify scan types: sequential, index and bitmap",
+   "Compare estimated and actual row counts to find stale statistics",
+   "Follow a fix loop: measure, change one thing, measure again"
+  ],
+  "exercises": [
+   "explain-vs-analyze",
+   "explain-signature",
+   "explain-danger",
+   "explain-estimate"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "B4",
+  "slug": "acid-and-transactions",
+  "title": "Transactions and ACID",
+  "order": 1,
+  "summary": "A transaction groups several statements into one all-or-nothing unit. ACID names the guarantees: atomicity, consistency, isolation and durability, and each is implemented by a mechanism you can point to.",
+  "minutes": 6,
+  "objectives": [
+   "State what each letter of ACID guarantees",
+   "Use BEGIN, COMMIT and ROLLBACK to make a multi-step change atomic",
+   "Link durability to the write-ahead log and isolation to MVCC",
+   "Keep transactions short and never hold them across slow external calls"
+  ],
+  "exercises": [
+   "acid-atomic",
+   "acid-durable",
+   "acid-pool-bug",
+   "acid-external"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "B4",
+  "slug": "isolation-levels",
+  "title": "Isolation levels, anomalies and lost updates",
+  "order": 2,
+  "summary": "Isolation decides what concurrent transactions can see of each other. Weaker levels allow anomalies like non-repeatable reads, lost updates and write skew; you choose a level and a locking technique to prevent the ones that matter.",
+  "minutes": 6,
+  "objectives": [
+   "Distinguish read committed, repeatable read and serializable in PostgreSQL",
+   "Recognise a non-repeatable read, a lost update and write skew",
+   "Prevent lost updates with atomic updates or SELECT FOR UPDATE",
+   "Handle serialization failures by retrying the whole transaction"
+  ],
+  "exercises": [
+   "iso-default",
+   "iso-lost",
+   "iso-skew",
+   "iso-retry"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "B5",
+  "slug": "nosql-and-data-model-tradeoffs",
+  "title": "NoSQL and data-model trade-offs",
+  "order": 1,
+  "summary": "Document, key-value, wide-column and graph stores each optimise one access pattern. Choose by how the data is read and how strictly it must be consistent, and remember that a relational database with JSONB covers many cases.",
+  "minutes": 6,
+  "objectives": [
+   "Name the four main NoSQL families and the access pattern each is built for",
+   "Show that Postgres JSONB with a GIN index handles document-style queries",
+   "Explain what you give up when the schema lives only in application code",
+   "Choose a store from the access pattern, consistency need and operational cost"
+  ],
+  "exercises": [
+   "nosql-family",
+   "nosql-jsonb",
+   "nosql-schema",
+   "nosql-choose"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "B6",
+  "slug": "cache-aside-and-eviction",
+  "title": "Caching with Redis: cache-aside, TTLs and eviction",
+  "order": 1,
+  "summary": "A cache keeps hot answers in fast memory. The cache-aside pattern, a time-to-live and an eviction policy decide what stays, what goes and how stale an answer may be.",
+  "minutes": 6,
+  "objectives": [
+   "Implement cache-aside and explain hits, misses and the hit rate",
+   "Predict how hit rate depends on cache size and on how skewed the traffic is",
+   "Compare Redis eviction policies and the noeviction failure mode",
+   "Choose a time-to-live as a deliberate staleness budget"
+  ],
+  "exercises": [
+   "cache-pattern",
+   "cache-skew",
+   "cache-oom",
+   "cache-ttl"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "B6",
+  "slug": "invalidation-and-stampedes",
+  "title": "Cache invalidation and stampedes",
+  "order": 2,
+  "summary": "Keeping a cache correct is harder than filling it. Invalidate on write, expect races, and protect the database when a popular key expires and many requests miss at once.",
+  "minutes": 6,
+  "objectives": [
+   "Describe why invalidation is hard and the race between a read and a write",
+   "Explain the cache stampede and measure its effect",
+   "Apply single-flight, jittered TTLs and stale-while-revalidate",
+   "Decide when not to cache at all"
+  ],
+  "exercises": [
+   "stampede-count",
+   "stampede-fix",
+   "inval-race",
+   "inval-jitter"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "B7",
+  "slug": "queues-and-workers",
+  "title": "Task queues and workers",
+  "order": 1,
+  "summary": "Slow or unreliable work should not happen inside a web request. Put a job in a queue and let workers process it, claiming each job safely so two workers never take the same one.",
+  "minutes": 6,
+  "objectives": [
+   "Explain why work is moved out of the request path",
+   "Build a job queue on Postgres using FOR UPDATE SKIP LOCKED",
+   "Describe at-least-once delivery and what happens when a worker crashes",
+   "Know the signals of a healthy queue: depth, age and throughput"
+  ],
+  "exercises": [
+   "queue-why",
+   "queue-skip",
+   "queue-crash",
+   "queue-outbox"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "B7",
+  "slug": "retries-backoff-idempotency",
+  "title": "Retries, backoff and idempotent jobs",
+  "order": 2,
+  "summary": "Failures are normal, so jobs are retried. Retrying carelessly overloads a struggling dependency, and retrying a non-idempotent job duplicates its effect. Backoff, jitter, limits and idempotency keys make retries safe.",
+  "minutes": 6,
+  "objectives": [
+   "Compute an exponential backoff schedule and explain why jitter is added",
+   "Explain how synchronized retries make an outage worse",
+   "Make a job idempotent with a stored key or a natural uniqueness rule",
+   "Decide when a job should go to a dead-letter state"
+  ],
+  "exercises": [
+   "retry-backoff",
+   "retry-jitter",
+   "retry-idem",
+   "retry-layers"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "B8",
+  "slug": "inverted-indexes-and-text-search",
+  "title": "Full-text search: inverted indexes, stemming and ranking",
+  "order": 1,
+  "summary": "LIKE with a leading wildcard scans every row. A full-text index maps each word to the documents containing it, so search is a lookup. Tokenising, stemming and stop words decide what matches.",
+  "minutes": 6,
+  "objectives": [
+   "Explain an inverted index and why it beats scanning",
+   "Show how tokenising, stop words and stemming change what matches",
+   "Use Postgres to_tsvector, to_tsquery and a GIN index, and read the speedup",
+   "Know where Postgres full-text search stops and a search engine begins"
+  ],
+  "exercises": [
+   "fts-why",
+   "fts-stem",
+   "fts-index",
+   "fts-engine"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "B8",
+  "slug": "keeping-search-in-sync",
+  "title": "Keeping a search index in sync with the source of truth",
+  "order": 2,
+  "summary": "A search index is a derived copy of your data. Keeping it correct means choosing how changes flow into it, accepting a short delay, and having a rebuild path for when it drifts.",
+  "minutes": 6,
+  "objectives": [
+   "Treat the search index as derived data with Postgres as the source of truth",
+   "Compare dual writes, a transactional outbox and periodic reindexing",
+   "Explain eventual consistency from the user's side and design for it",
+   "Describe an idempotent, rebuildable indexing pipeline"
+  ],
+  "exercises": [
+   "sync-dual",
+   "sync-outbox",
+   "sync-auth",
+   "sync-rebuild"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "B9",
+  "slug": "timeouts-and-circuit-breakers",
+  "title": "Timeouts, circuit breakers and failing fast",
+  "order": 1,
+  "summary": "A slow dependency is more dangerous than a dead one because callers wait on it. Timeouts bound the wait, circuit breakers stop calling a failing service, and fast failure keeps one problem from spreading.",
+  "minutes": 6,
+  "objectives": [
+   "Explain why a missing timeout turns a slow dependency into an outage",
+   "Set timeouts as a budget across a chain of calls",
+   "Describe the closed, open and half-open states of a circuit breaker",
+   "Use fallbacks and load shedding deliberately"
+  ],
+  "exercises": [
+   "ft-slow",
+   "ft-breaker",
+   "ft-budget",
+   "ft-default"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "B9",
+  "slug": "retry-storms-and-cascades",
+  "title": "Retry storms, overload and cascading failure",
+  "order": 2,
+  "summary": "Retries multiply load on a service that is already struggling. Understanding the arithmetic of amplification, and using budgets, backpressure and load shedding, explains how small faults become outages and how to stop them.",
+  "minutes": 6,
+  "objectives": [
+   "Compute retry amplification across layers and attempts",
+   "Explain why overloaded systems can stay broken after the original fault ends",
+   "Apply retry budgets, backpressure and load shedding",
+   "Plan a failure drill that tests these defences"
+  ],
+  "exercises": [
+   "storm-amp",
+   "storm-queue",
+   "storm-shed",
+   "storm-stuck"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "C1",
+  "slug": "logs-metrics-and-traces",
+  "title": "Logs, metrics and traces",
+  "order": 1,
+  "summary": "Observability is the ability to ask new questions about a running system. Structured logs tell you what happened, metrics tell you how much and how fast, and traces show where time went across services.",
+  "minutes": 6,
+  "objectives": [
+   "State what logs, metrics and traces are each good for",
+   "Write structured logs with a request id and avoid logging secrets",
+   "Explain why averages hide problems and percentiles reveal them",
+   "Know the RED and USE methods for choosing what to measure"
+  ],
+  "exercises": [
+   "obs-pct",
+   "obs-reqid",
+   "obs-signal",
+   "obs-card"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "C1",
+  "slug": "alerts-slos-and-debugging",
+  "title": "SLOs, alerts and a method for debugging production",
+  "order": 2,
+  "summary": "Define what good service means as a measurable objective, alert on user-visible symptoms and error-budget burn, and debug production with a repeatable loop from symptom to cause using the signals you collected.",
+  "minutes": 6,
+  "objectives": [
+   "Define an SLI and an SLO and compute an error budget",
+   "Write alerts on symptoms, with severity and a runbook link",
+   "Apply a debugging loop: scope, compare, hypothesise, test, fix",
+   "Write a blameless postmortem with actions"
+  ],
+  "exercises": [
+   "slo-budget",
+   "slo-alert",
+   "slo-loop",
+   "slo-blame"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "C2",
+  "slug": "graceful-shutdown",
+  "title": "Graceful shutdown: stopping without dropping requests",
+  "order": 1,
+  "summary": "Every deploy stops old servers. A graceful shutdown stops accepting new work, finishes what is in flight, closes resources and exits within a deadline, so users never notice a deploy.",
+  "minutes": 6,
+  "objectives": [
+   "Explain the sequence an orchestrator uses to stop a process",
+   "Implement shutdown on SIGTERM that drains in-flight requests",
+   "Coordinate readiness, load balancer removal and the shutdown deadline",
+   "Handle long-lived connections and background jobs during shutdown"
+  ],
+  "exercises": [
+   "gs-order",
+   "gs-idle",
+   "gs-race",
+   "gs-worker"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "C3",
+  "slug": "injection-and-password-storage",
+  "title": "Injection, password storage and where trust ends",
+  "order": 1,
+  "summary": "Most backend breaches come from a few causes: treating input as code, storing passwords so they can be cracked quickly, and trusting the client. Parameterised queries and slow password hashes remove whole classes of them.",
+  "minutes": 6,
+  "objectives": [
+   "Demonstrate SQL injection and fix it with parameters",
+   "Explain why password hashes must be slow and salted, with numbers",
+   "Identify where the trust boundary sits in a request",
+   "Apply least privilege to database accounts and secrets"
+  ],
+  "exercises": [
+   "sec-sqli",
+   "sec-hash",
+   "sec-trust",
+   "sec-priv"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "C3",
+  "slug": "rate-limiting-and-owasp",
+  "title": "Rate limiting, abuse and the OWASP Top 10",
+  "order": 2,
+  "summary": "Authentication and validation are not enough: clients can still overload you or guess credentials. Rate limiting with a token bucket bounds abuse, and the OWASP Top 10 gives a checklist of what attackers actually exploit.",
+  "minutes": 6,
+  "objectives": [
+   "Explain the token bucket and compute how many requests it allows",
+   "Say why an in-memory limiter fails across several instances",
+   "Recognise the main OWASP Top 10 categories and a defence for each",
+   "Design limits per user, per IP and per endpoint"
+  ],
+  "exercises": [
+   "rl-bucket",
+   "rl-shared",
+   "rl-owasp",
+   "rl-enum"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "C4",
+  "slug": "proxies-and-load-balancing",
+  "title": "Reverse proxies and load balancing",
+  "order": 1,
+  "summary": "A reverse proxy fronts your servers to terminate TLS, route and spread requests. Round robin ignores load, least connections reacts to it, and health checks keep traffic off dead servers.",
+  "minutes": 6,
+  "objectives": [
+   "Describe what a reverse proxy does and what it hides",
+   "Compare round robin and least connections under uneven request times",
+   "Explain health checks, connection draining and sticky sessions",
+   "Identify what makes a service horizontally scalable"
+  ],
+  "exercises": [
+   "lb-rr",
+   "lb-health",
+   "lb-sticky",
+   "lb-scale"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "C4",
+  "slug": "replication-sharding-and-limits-of-scaling",
+  "title": "Replication, sharding and the limits of scaling",
+  "order": 2,
+  "summary": "When one database is not enough, you copy it (replication) for reads and availability, or split it (sharding) for writes and size. Each brings new failure modes, and the serial part of any workload caps the speedup.",
+  "minutes": 7,
+  "objectives": [
+   "Explain primary-replica replication, read scaling and replication lag",
+   "Describe sharding and why the choice of shard key and hashing method matter",
+   "Compare modulo hashing and consistent hashing by the keys that move",
+   "Use Amdahl's law to reason about the limit of adding machines"
+  ],
+  "exercises": [
+   "rep-lag",
+   "shard-hash",
+   "amdahl",
+   "shard-when"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "C5",
+  "slug": "races-locks-and-atomics",
+  "title": "Race conditions, locks and atomic operations",
+  "order": 1,
+  "summary": "A race condition happens when the result depends on the timing of operations that share state. You can get one even in single-threaded Node. Locks, atomic operations and avoiding shared state are the three ways to fix it.",
+  "minutes": 6,
+  "objectives": [
+   "Define a race condition and a critical section",
+   "Reproduce a race in single-threaded async code and in multi-threaded shared memory",
+   "Compare a lock with an atomic operation and say when each fits",
+   "Recognise check-then-act and read-modify-write as the classic shapes"
+  ],
+  "exercises": [
+   "race-await",
+   "race-atomic",
+   "race-cta",
+   "race-scope"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "C5",
+  "slug": "deadlocks-and-worker-models",
+  "title": "Deadlocks, scheduling and worker models",
+  "order": 2,
+  "summary": "Locks can make tasks wait for each other forever. Deadlock needs four conditions, and breaking any one prevents it. Worker models (event loop, thread pool, worker threads, processes) decide how a backend spends its cores.",
+  "minutes": 6,
+  "objectives": [
+   "Reproduce a deadlock with two locks acquired in opposite order and fix it with ordering",
+   "State the four conditions for deadlock and map fixes to them",
+   "Explain the producer-consumer pattern with a bounded buffer",
+   "Choose between event loop, worker threads and multiple processes for a workload"
+  ],
+  "exercises": [
+   "dl-cause",
+   "dl-fix",
+   "dl-buffer",
+   "dl-model"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "D1",
+  "slug": "images-layers-and-the-build-cache",
+  "title": "Docker images, layers and the build cache",
+  "order": 1,
+  "summary": "A container is a process isolated by the kernel, started from an image built in layers. Ordering a Dockerfile so rarely changing steps come first keeps rebuilds fast, and multi-stage builds keep the final image small.",
+  "minutes": 6,
+  "objectives": [
+   "Explain image, layer, container and registry",
+   "Order Dockerfile instructions to maximise build-cache hits",
+   "Use a multi-stage build to ship only what runs",
+   "Explain why containers are processes and what isolation they do and do not give"
+  ],
+  "exercises": [
+   "dk-process",
+   "dk-cache",
+   "dk-order",
+   "dk-secret"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "D1",
+  "slug": "running-containers-compose-and-networking",
+  "title": "Running containers: volumes, networking and Compose",
+  "order": 2,
+  "summary": "Containers are disposable, so data lives in volumes, configuration in environment variables, and services find each other by name on a network. Docker Compose describes a whole multi-service stack and its startup order in one file.",
+  "minutes": 6,
+  "objectives": [
+   "Explain ephemeral containers and where state must live",
+   "Map ports, networks and service names between containers and the host",
+   "Read a Compose file with health-ordered startup",
+   "Debug a container that exits, restarts or cannot connect"
+  ],
+  "exercises": [
+   "dkc-localhost",
+   "dkc-depends",
+   "dkc-exit",
+   "dkc-data"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "D2",
+  "slug": "kubernetes-scheduling-and-rollouts",
+  "title": "Kubernetes: scheduling, self-healing and rolling updates",
+  "order": 1,
+  "summary": "Kubernetes keeps a declared desired state true. You describe replicas, images and probes; controllers schedule pods onto nodes, restart failures and roll out new versions gradually. It is powerful, and often more than a small system needs.",
+  "minutes": 6,
+  "objectives": [
+   "Describe pods, deployments, services and the control loop",
+   "Explain how readiness and liveness probes drive traffic and restarts",
+   "Walk through a rolling update and how to roll back",
+   "Decide whether Kubernetes is worth its cost for a given system"
+  ],
+  "exercises": [
+   "k8s-loop",
+   "k8s-ready",
+   "k8s-liveness",
+   "k8s-need"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "D3",
+  "slug": "ci-cd-pipelines",
+  "title": "CI/CD: from commit to production",
+  "order": 1,
+  "summary": "A pipeline runs the same checks on every change, builds an artifact once, and promotes that same artifact through environments. Fast feedback and the ability to roll back make frequent, small releases safe.",
+  "minutes": 6,
+  "objectives": [
+   "Describe the stages of a CI/CD pipeline and what each protects against",
+   "Explain build once, deploy many, and why artifacts are immutable",
+   "Compare rolling, blue-green and canary deployments",
+   "Handle database migrations and secrets safely in a pipeline"
+  ],
+  "exercises": [
+   "cd-once",
+   "cd-canary",
+   "cd-migrate",
+   "cd-flaky"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "D4",
+  "slug": "what-to-test-and-the-test-pyramid",
+  "title": "What to test: the pyramid, and tests that earn their keep",
+  "order": 1,
+  "summary": "Tests are only worth what they catch and how fast they run. Many fast unit tests for pure logic, fewer integration tests against real dependencies, and a handful of end-to-end checks give the best protection per second of waiting.",
+  "minutes": 6,
+  "objectives": [
+   "Describe unit, integration and end-to-end tests and what each is good at",
+   "Choose what to test: behaviour, boundaries and failure modes, not implementation",
+   "Explain why integration tests should use a real database",
+   "Recognise properties that make code easy to test"
+  ],
+  "exercises": [
+   "test-pyramid",
+   "test-mock",
+   "test-coverage",
+   "test-flaky"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "D4",
+  "slug": "testing-http-and-database-code",
+  "title": "Testing HTTP APIs, databases and failure paths",
+  "order": 2,
+  "summary": "Test an API by calling it as a client would, against a real database reset between tests, and test the failures too: validation errors, unauthorised access, duplicates and timeouts. Determinism and isolation keep it fast and trustworthy.",
+  "minutes": 6,
+  "objectives": [
+   "Structure an API integration test with setup, request, assertion and cleanup",
+   "Isolate tests with a real test database, transactions or truncation",
+   "Test authorisation, validation and idempotency explicitly",
+   "Test code that depends on time, randomness and external services using fakes"
+  ],
+  "exercises": [
+   "api-test-both",
+   "api-test-authz",
+   "api-test-time",
+   "api-test-db"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "D5",
+  "slug": "brokers-logs-and-offsets",
+  "title": "Message brokers: logs, partitions and offsets",
+  "order": 1,
+  "summary": "A broker like Kafka keeps messages in an append-only log split into partitions. Consumers track an offset, so history can be replayed, order holds only within a partition, and delivery is at least once.",
+  "minutes": 6,
+  "objectives": [
+   "Contrast a work queue with a partitioned, retained log",
+   "Explain partitions, keys, ordering guarantees and consumer groups",
+   "Show how committing offsets after processing gives at-least-once delivery",
+   "Recognise hot partitions and consumer lag"
+  ],
+  "exercises": [
+   "kafka-order",
+   "kafka-redeliver",
+   "kafka-parallel",
+   "kafka-hot"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "D5",
+  "slug": "event-driven-design-and-delivery",
+  "title": "Event-driven design: commands, events and keeping consumers safe",
+  "order": 2,
+  "summary": "Services can communicate by publishing facts (events) instead of calling each other. That decouples them and adds new failure modes: duplicates, reordering, schema changes and eventual consistency, each with a standard defence.",
+  "minutes": 6,
+  "objectives": [
+   "Distinguish commands from events and say what each couples",
+   "Design events as immutable facts with ids, versions and schemas",
+   "Make consumers idempotent and tolerant of reordering and replays",
+   "Use outbox, dead-letter queues and schema evolution rules"
+  ],
+  "exercises": [
+   "evt-cmd",
+   "evt-dup",
+   "evt-order",
+   "evt-schema"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "D6",
+  "slug": "websockets-and-realtime-fanout",
+  "title": "WebSockets and real-time fan-out",
+  "order": 1,
+  "summary": "HTTP is request and response; a WebSocket upgrades one connection into a long-lived, two-way channel with tiny frames. The hard part is not the protocol but holding many open connections and fanning messages out across servers.",
+  "minutes": 7,
+  "objectives": [
+   "Explain the WebSocket handshake and verify the accept key computation",
+   "Compare WebSockets with polling and server-sent events by overhead and direction",
+   "Calculate fan-out bandwidth and send rates for a broadcast",
+   "Design for reconnection, presence, backpressure and multiple server instances"
+  ],
+  "exercises": [
+   "ws-upgrade",
+   "ws-fanout",
+   "ws-scale",
+   "ws-reconnect"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "E1",
+  "slug": "openapi-as-a-contract",
+  "title": "OpenAPI: the API contract as a machine-readable document",
+  "order": 1,
+  "summary": "An OpenAPI document describes every path, parameter, body, response and error of an HTTP API in a standard format. When it is generated from the same schemas the server validates with, docs and behaviour cannot drift apart.",
+  "minutes": 6,
+  "objectives": [
+   "Read the structure of an OpenAPI 3.1 document",
+   "Explain why one source of truth for validation and documentation prevents drift",
+   "Describe security schemes, shared components and error schemas",
+   "Serve the document and use it for tooling"
+  ],
+  "exercises": [
+   "oas-parts",
+   "oas-drift",
+   "oas-error",
+   "oas-use"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "E1",
+  "slug": "contract-tests-and-breaking-changes",
+  "title": "Contract tests, versioning and breaking changes",
+  "order": 2,
+  "summary": "A contract is only useful if the running server matches it and changes do not break clients. Test responses against the document, classify changes as compatible or breaking, and evolve the API without surprising anyone.",
+  "minutes": 6,
+  "objectives": [
+   "Test that real responses conform to the documented schema",
+   "Classify an API change as backwards compatible or breaking",
+   "Choose a versioning and deprecation strategy",
+   "Apply the robustness principle to clients and servers"
+  ],
+  "exercises": [
+   "brk-classify",
+   "brk-tolerant",
+   "brk-deprecate",
+   "brk-contract"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "E2",
+  "slug": "agents-tools-and-failure-handling",
+  "title": "AI agents as backend workflows: loops, tools and failure handling",
+  "order": 1,
+  "summary": "An agent is a loop in which a model chooses tools, the system executes them and feeds results back. From the backend's view it is a workflow engine with an unreliable planner, so it needs budgets, timeouts, retries, idempotency and logging.",
+  "minutes": 7,
+  "objectives": [
+   "Describe the agent loop of model, tool call, execution and observation",
+   "Show why the cost of a long loop grows faster than linearly",
+   "Apply step budgets, timeouts, retries and validation to tool calls",
+   "Decide when a fixed workflow is better than an agent"
+  ],
+  "exercises": [
+   "agent-who",
+   "agent-limit",
+   "agent-cost",
+   "agent-inject"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "E3",
+  "slug": "retrieval-augmented-generation-and-evaluation",
+  "title": "RAG in production: retrieval, refusal and evaluation",
+  "order": 1,
+  "summary": "Retrieval-augmented generation answers from your documents instead of the model's memory. Its quality is decided by retrieval and by knowing when to refuse, and both must be measured on questions you wrote before looking at the results.",
+  "minutes": 7,
+  "objectives": [
+   "Describe the retrieve, assemble and answer pipeline and where it fails",
+   "Compare lexical, vector and hybrid retrieval using recall and MRR",
+   "Explain an evidence gate and measure it with held-out questions",
+   "Design an evaluation set that does not leak into tuning"
+  ],
+  "exercises": [
+   "rag-mrr",
+   "rag-gate",
+   "rag-leak",
+   "rag-adjacent"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "E3",
+  "slug": "cost-latency-safety-and-guardrails",
+  "title": "Production AI: cost, latency, safety and guardrails",
+  "order": 2,
+  "summary": "Calling a model from a backend adds a slow, costly, nondeterministic dependency. Budget tokens, set timeouts and caching, validate outputs, defend against prompt injection and keep people accountable for consequential decisions.",
+  "minutes": 7,
+  "objectives": [
+   "Estimate cost and latency from token counts and traffic",
+   "Apply timeouts, caching, batching and fallbacks to model calls",
+   "Validate and constrain model output before it reaches users or systems",
+   "Describe prompt injection and the layered defences against it"
+  ],
+  "exercises": [
+   "ai-input",
+   "ai-inject",
+   "ai-output",
+   "ai-budget"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "F0",
+  "slug": "why-distributed-systems-are-hard",
+  "title": "Why distributed systems are hard: partial failure, time and quorums",
+  "order": 1,
+  "summary": "Once state lives on several machines, calls can fail without telling you whether they happened, clocks disagree, and replicas diverge. Quorums and logical clocks are the basic tools for reasoning about it.",
+  "minutes": 5,
+  "objectives": [
+   "Explain partial failure and why a timeout is ambiguous",
+   "Use quorum overlap (R + W > N) to reason about read freshness",
+   "Compare vector clocks to detect concurrent updates",
+   "Describe the trade-off CAP and PACELC point at"
+  ],
+  "exercises": [
+   "ds-timeout",
+   "ds-quorum",
+   "ds-vc"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "F1",
+  "slug": "a-method-for-system-design",
+  "title": "A method for system design: requirements, estimates and bottlenecks",
+  "order": 1,
+  "summary": "Design starts with requirements and numbers, not boxes. Turn traffic into queries per second, storage and bandwidth, find the first bottleneck, and add components only when a number justifies them.",
+  "minutes": 4,
+  "objectives": [
+   "Separate functional requirements, non-functional requirements and non-goals",
+   "Convert user counts into requests per second and storage with back-of-envelope arithmetic",
+   "Identify the first bottleneck and the cheapest fix",
+   "Record decisions with their trade-offs"
+  ],
+  "exercises": [
+   "sd-qps",
+   "sd-first",
+   "sd-peak"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "F2",
+  "slug": "designing-a-url-shortener",
+  "title": "Design: a URL shortener",
+  "order": 1,
+  "summary": "Generate short codes without collisions, store the mapping, and redirect fast. Compare counter-based base62 encoding with random and hashed codes using measured collision numbers.",
+  "minutes": 5,
+  "objectives": [
+   "Estimate how many codes a given length and alphabet provides",
+   "Compare counter, random and hash-based code generation",
+   "Choose redirect status codes and a caching strategy",
+   "Identify abuse and consistency concerns"
+  ],
+  "exercises": [
+   "url-space",
+   "url-hash",
+   "url-301"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "F3",
+  "slug": "designing-a-distributed-rate-limiter",
+  "title": "Design: a distributed rate limiter",
+  "order": 1,
+  "summary": "Limit requests per client across many app instances. Compare fixed window, sliding window and token bucket, then share state safely, using a measured boundary-burst example.",
+  "minutes": 4,
+  "objectives": [
+   "Compare fixed window, sliding window and token bucket algorithms",
+   "Explain the boundary burst problem with numbers",
+   "Share limiter state across instances atomically",
+   "Decide fail-open or fail-closed behaviour"
+  ],
+  "exercises": [
+   "rl-boundary",
+   "rl-atomic",
+   "rl-open"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "F4",
+  "slug": "designing-a-notification-system",
+  "title": "Design: a notification system",
+  "order": 1,
+  "summary": "Deliver email, push and in-app messages reliably without duplicates or floods. Queue the work, make sends idempotent, respect user preferences, and handle provider failures with retries and dead letters.",
+  "minutes": 4,
+  "objectives": [
+   "Decouple triggering from delivery with a queue",
+   "Make sends idempotent so retries do not duplicate messages",
+   "Apply preferences, quiet hours and rate limits per user",
+   "Handle provider failure with backoff and a dead-letter queue"
+  ],
+  "exercises": [
+   "nt-dedup",
+   "nt-prio",
+   "nt-dlq"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "F5",
+  "slug": "designing-a-chat-system",
+  "title": "Design: a chat system",
+  "order": 1,
+  "summary": "Real-time chat needs persistent connections, ordered and durable messages, delivery to offline users and routing across many servers. Order per conversation, store first, then fan out.",
+  "minutes": 4,
+  "objectives": [
+   "Choose a transport for real-time delivery and justify it",
+   "Order messages within a conversation and assign ids",
+   "Route messages to users connected to different servers",
+   "Handle offline delivery, reconnects and duplicates"
+  ],
+  "exercises": [
+   "ch-order",
+   "ch-offline",
+   "ch-crash"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "F6",
+  "slug": "designing-file-storage-and-sync",
+  "title": "Design: file storage and sync",
+  "order": 1,
+  "summary": "Store large files by splitting them into chunks, deduplicate by content hash, and sync only what changed. Content-defined chunking survives inserts that defeat fixed-size chunks, as measured.",
+  "minutes": 4,
+  "objectives": [
+   "Split files into chunks and store them by content hash",
+   "Compare fixed-size and content-defined chunking",
+   "Separate metadata from blob storage",
+   "Describe resumable upload and conflict handling"
+  ],
+  "exercises": [
+   "fs-cdc",
+   "fs-presign",
+   "fs-gc"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ },
+ {
+  "chapter": "F7",
+  "slug": "designing-a-news-feed",
+  "title": "Design: a news feed",
+  "order": 1,
+  "summary": "A feed merges recent posts from people you follow. Fan-out on write precomputes feeds and costs a lot for popular accounts; fan-out on read computes on demand. Production systems mix both.",
+  "minutes": 4,
+  "objectives": [
+   "Compare fan-out on write with fan-out on read using numbers",
+   "Explain the celebrity problem and the hybrid approach",
+   "Design feed storage and pagination with cursors",
+   "Identify consistency and ranking concerns"
+  ],
+  "exercises": [
+   "nf-write",
+   "nf-celeb",
+   "nf-cursor"
+  ],
+  "headings": [
+   {
+    "id": "why-it-exists",
+    "text": "Why it exists"
+   },
+   {
+    "id": "how-it-works",
+    "text": "How it works"
+   },
+   {
+    "id": "common-mistakes",
+    "text": "Common mistakes"
+   },
+   {
+    "id": "trade-offs",
+    "text": "Trade-offs"
+   },
+   {
+    "id": "in-production",
+    "text": "In production"
+   },
+   {
+    "id": "check-yourself",
+    "text": "Check yourself"
+   }
+  ]
+ }
+]

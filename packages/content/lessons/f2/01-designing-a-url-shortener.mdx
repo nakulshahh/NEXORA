@@ -1,0 +1,86 @@
+---
+chapter: F2
+slug: designing-a-url-shortener
+title: "Design: a URL shortener"
+order: 1
+summary: "Generate short codes without collisions, store the mapping, and redirect fast. Compare counter-based base62 encoding with random and hashed codes using measured collision numbers."
+objectives:
+  - Estimate how many codes a given length and alphabet provides
+  - Compare counter, random and hash-based code generation
+  - Choose redirect status codes and a caching strategy
+  - Identify abuse and consistency concerns
+concepts: [base62, collision, birthday problem, counter, redirect 301 302, cache, read-heavy, abuse]
+reading:
+  - title: "Birthday problem"
+    url: "https://en.wikipedia.org/wiki/Birthday_problem"
+  - title: "RFC 9110: Redirection 3xx"
+    url: "https://www.rfc-editor.org/rfc/rfc9110#name-redirection-3xx"
+misconceptions:
+  - belief: "Hashing the URL and truncating gives a unique short code."
+    correction: "Truncation discards bits, so collisions are inevitable. In a measured run, 5-character prefixes of 200 000 URLs collided 13 times. You must detect and resolve collisions."
+  - belief: "Random 7-character codes will practically never collide."
+    correction: "Collision odds per insert grow with how full the space is. They are tiny at a million codes and need handling at hundreds of millions; always rely on a unique constraint, not luck."
+---
+
+## Why it exists
+
+A classic read-heavy design: write a long URL once, redirect to it many times.
+
+<Callout kind="why">
+It shows capacity arithmetic, id generation, caching and abuse in one small system.
+</Callout>
+
+## How it works
+
+### Requirements and numbers
+
+Create short link, redirect, optional expiry. Reads outnumber writes by perhaps 100:1; redirects must be fast and highly available. 100 million new links per month is ~40 writes/s; 100:1 reads is ~4 000 redirects/s.
+
+### Code space
+
+Base62 (0-9, a-z, A-Z) gives 62ⁿ codes, measured: length 6 → 5.68×10¹⁰, 7 → 3.52×10¹², 8 → 2.18×10¹⁴. Seven characters is plenty for decades at this rate.
+
+### Generating codes
+
+- **Counter then base62**: a unique id (database sequence or a range handed to each app instance) encoded in base62: 125 → "21", 10⁹ → "15FTGg". No collisions; codes are guessable and sequential, which may leak volume. Mitigate by scrambling the id with a reversible permutation.
+- **Random**: pick 7 random characters; insert; on unique-constraint violation, retry. Measured chance the next insert collides: 2.8×10⁻⁷ at 10⁶ stored, 2.8×10⁻⁶ at 10⁷, 2.8×10⁻⁵ at 10⁸. Cheap, rare retries.
+- **Hash of the URL**: deterministic (same URL, same code) but truncation collides (13 collisions among 200 000 at 5 characters, expected about 19), so you still need a check.
+
+### Storage and redirect
+
+One table: code (primary key), long URL, created, expiry, owner. Look up by primary key. Put a cache (B6) in front: hot links dominate. Use **302** if you want every click to reach you (analytics, edits), **301** when permanence and fewer requests matter; browsers cache 301 aggressively, so you cannot change the target later for those users.
+
+### Abuse
+
+Validate URLs and block dangerous schemes, rate-limit creation (C3), scan for phishing, prevent open redirects to internal addresses (SSRF when you preview links), and provide takedown.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Assuming uniqueness without a database constraint, then serving the wrong destination after a collision.
+</Callout>
+
+- **301 for links you may need to change.**
+- **No cache** on a read-heavy path.
+- **Sequential ids that expose business volume.**
+- **Unbounded creation** by one client.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Counters avoid collisions and need coordination; random codes need no coordination and need retries; hashing deduplicates and still collides.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Track cache hit ratio, redirect latency percentiles and creation rate; keep expiry cleanup as a batch job.
+</Callout>
+
+## Check yourself
+
+<Exercise id="url-space" kind="predict" prompt="Roughly how many codes do 7 base62 characters give?" options={["3.5 million", "3.5 billion", "3.5 trillion", "62 thousand"]} answer={2} explain="62^7 is about 3.5 x 10^12." />
+
+<Exercise id="url-hash" kind="debug" prompt="Two different URLs produce the same truncated hash code. What must the design have?" options={["Nothing", "A unique constraint and a collision-handling path", "A bigger font", "Fewer users"]} answer={1} explain="Truncation guarantees collisions eventually; detect them with a constraint and resolve." />
+
+<Exercise id="url-301" kind="scenario" prompt="You may later change where a link points. Which redirect is safer?" options={["301", "302", "Neither", "200"]} answer={1} explain="Browsers cache 301s, so changes would not reach them. 302 keeps control." />

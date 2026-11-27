@@ -1,0 +1,110 @@
+---
+chapter: A3
+slug: binary-formats-and-schemas
+title: "Binary formats, schemas and compatibility"
+order: 2
+summary: "Protocol Buffers pack data into a few bytes using a schema, with field numbers instead of names. See the exact bytes, then learn the rules that let old and new services keep talking."
+objectives:
+  - Explain how a varint stores an integer in a variable number of bytes
+  - Decode a small Protocol Buffers message by hand
+  - State which schema changes are safe and which break old readers
+  - Decide when JSON is enough and when a binary format earns its complexity
+concepts: [varint, Protocol Buffers, wire format, field number, schema evolution, backward compatibility]
+reading:
+  - title: "Protocol Buffers: Encoding"
+    url: "https://protobuf.dev/programming-guides/encoding/"
+misconceptions:
+  - belief: "Binary formats are always faster, so use them everywhere."
+    correction: "They are smaller and faster to parse, but harder to debug and need shared schemas. For most public APIs the human-readable format wins on total cost."
+  - belief: "Renaming a field in a schema is a harmless refactor."
+    correction: "On the wire the field is identified by its number, not its name. Renaming is safe, but reusing or changing a number silently corrupts data for old readers."
+---
+
+## Why it exists
+
+JSON repeats every field name in every message and writes numbers as text. For a service that sends millions of small messages to another service, that is wasted bandwidth and CPU. A **schema-based binary format** agrees the field layout in advance, so the message carries only values and short numeric tags.
+
+<Callout kind="why">
+When both sides share a schema, names do not need to travel. That is where the size and speed come from, and also where the new problems come from.
+</Callout>
+
+## How it works
+
+### Varints: small numbers take fewer bytes
+
+A **varint** stores an unsigned integer 7 bits at a time. Each byte holds 7 bits of the number; the top bit says "more bytes follow". Small numbers fit in one byte.
+
+```js file=varint.mjs mark=2,3,4,5
+export function encodeVarint(n) {
+  const out = [];
+  while (n >= 0x80) { out.push((n & 0x7f) | 0x80); n = Math.floor(n / 128); }
+  out.push(n);
+  return Uint8Array.from(out);
+}
+// 1   -> 01
+// 300 -> ac 02   (300 = 0b10_0101100: low 7 bits 0101100 with the continue bit set = 0xac, then 0b10 = 0x02)
+```
+
+I ran this: `1` encodes as `01` and `300` as `ac 02`. The cost is one byte per 7 bits of the value, so the size depends on how large the number is, not on the field type.
+
+### A whole message by hand
+
+Take the schema `message User { int32 id = 1; string name = 2; }` and the value `{ id: 150, name: "ada" }`. Each field is written as a **tag** (the field number shifted left 3 bits, OR the wire type) followed by its value.
+
+| Bytes | Meaning |
+|---|---|
+| `08` | tag: field 1, wire type 0 (varint) |
+| `96 01` | varint 150 |
+| `12` | tag: field 2, wire type 2 (length-delimited) |
+| `03` | length 3 |
+| `61 64 61` | the UTF-8 bytes of "ada" |
+
+Total: `08 96 01 12 03 61 64 61` is **8 bytes**. The equivalent JSON text `{"id":150,"name":"ada"}` is 23 bytes. (Both counts were produced by running the code.)
+
+### Why field numbers are forever
+
+The reader uses the tag to know which field it is looking at. That makes **evolution** possible if you follow the rules:
+
+- **Safe:** add a new field with a new number (old readers skip unknown tags); stop using a field and mark its number **reserved**; rename a field (names are not on the wire).
+- **Breaking:** reuse a number for a different meaning; change a field's type to an incompatible one.
+
+<Seq participants={["Old reader", "Wire", "New writer"]} messages={[
+  {"from":2,"to":1,"label":"message now includes new field 3"},
+  {"from":1,"to":0,"label":"old reader skips tag 3 and keeps working"}
+]} />
+
+### The cost you accept
+
+You cannot read the bytes with your eyes, you need the schema and code generation, and tooling like curl and browser dev tools understand JSON better than Protobuf. That is the real price of the savings.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Reusing a retired field number for a new field. An old client that still sends the old meaning will write data the new server interprets as the new meaning, and nothing fails loudly.
+</Callout>
+
+- **Making every field required.** You can never remove one later. Treat fields as optional by default.
+- **Switching formats for speed without measuring.** Network and database time usually dominate parsing time.
+- **Using floats for money** in a schema as well, with the same errors as JSON.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Binary formats reduce size and parse time and give strong contracts, at the price of tooling, readability and a build step. They shine for internal service-to-service calls at high volume. Public, browser-facing APIs usually stay on JSON.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Schema files live in version control with a compatibility check in CI (tools such as buf compare the new schema to the previous release and fail on breaking changes). Retired field numbers are marked reserved so nobody reuses them. gRPC, covered in a later chapter, is built on exactly this.
+</Callout>
+
+## Check yourself
+
+<Exercise id="varint-size" kind="predict" prompt="How many bytes does the varint encoding of the number 300 take?" options={["1", "2", "4", "8"]} answer={1} explain="300 needs 9 bits. Seven bits fit in the first byte, so it needs a second byte: ac 02." />
+
+<Exercise id="pb-decode" kind="quiz" prompt="Bytes 08 96 01 12 03 61 64 61 under the schema (id = 1 varint, name = 2 string). What is name?" options={["ada", "150", "adam", "The bytes are invalid"]} answer={0} explain="Tag 12 is field 2, length-delimited, length 3, and the three bytes 61 64 61 are 'ada' in UTF-8." />
+
+<Exercise id="pb-evolve" kind="scenario" prompt="You retire a field numbered 4 and later add a new field also numbered 4 with a different type. Old clients are still deployed. What happens?" options={["Nothing, numbers are free to reuse", "Old clients write data the server reads as the new field, causing silent corruption; reserve retired numbers instead", "The compiler always rejects it at runtime", "Only JSON is affected"]} answer={1} explain="The wire identifies fields by number. Reuse changes the meaning of bytes already in flight, and nothing signals an error." />
+
+<Exercise id="pb-when" kind="quiz" prompt="Which situation most justifies a binary format over JSON?" options={["A public API used by browsers and curl", "High-volume internal calls between two services you control", "A small config file edited by hand", "A one-off script"]} answer={1} explain="Internal, high-volume, schema-controlled traffic gains most from smaller messages and faster parsing, while the lost readability costs least." />

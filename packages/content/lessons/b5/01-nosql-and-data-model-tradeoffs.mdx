@@ -1,0 +1,100 @@
+---
+chapter: B5
+slug: nosql-and-data-model-tradeoffs
+title: "NoSQL and data-model trade-offs"
+order: 1
+summary: "Document, key-value, wide-column and graph stores each optimise one access pattern. Choose by how the data is read and how strictly it must be consistent, and remember that a relational database with JSONB covers many cases."
+objectives:
+  - Name the four main NoSQL families and the access pattern each is built for
+  - Show that Postgres JSONB with a GIN index handles document-style queries
+  - Explain what you give up when the schema lives only in application code
+  - Choose a store from the access pattern, consistency need and operational cost
+concepts: [NoSQL, document store, key-value, wide-column, graph, JSONB, GIN index, schema-on-read, polyglot persistence]
+reading:
+  - title: "PostgreSQL docs: JSON types and GIN indexes"
+    url: "https://www.postgresql.org/docs/current/datatype-json.html"
+  - title: "Martin Fowler: Polyglot Persistence"
+    url: "https://martinfowler.com/bliki/PolyglotPersistence.html"
+misconceptions:
+  - belief: "NoSQL databases are faster than SQL databases."
+    correction: "Speed depends on the access pattern. A key-value store is excellent at get-by-key and poor at ad hoc joins; a relational database is the reverse. Neither is faster in general, and Postgres with the right index handles many document workloads."
+  - belief: "A schemaless database means you do not need to think about the schema."
+    correction: "The schema still exists, but it moves into your application code and your data. Without database-enforced types, old and new shapes coexist and every reader must cope with them."
+---
+
+## Why it exists
+
+Relational databases are general-purpose and strongly consistent, which is the right default (the B-chapters so far). But some workloads have a dominant access pattern or scale that a specialised store handles more simply: looking up a session by id at huge volume, storing nested documents read as a unit, or traversing relationships. "NoSQL" is a label for several different tools, not one technology.
+
+<Callout kind="why">
+Pick the data store from how you will read and write the data, then check what it costs to operate and what consistency it gives. Fashion is not a requirement.
+</Callout>
+
+## How it works
+
+### The families
+
+- **Key-value** (Redis, DynamoDB used simply): get and set by key. Extremely fast and easy to scale; no queries beyond the key. Good for sessions, caches, counters.
+- **Document** (MongoDB, Postgres JSONB): nested JSON-like records read and written as a unit. Good when the entity is naturally a tree and mostly accessed whole.
+- **Wide-column** (Cassandra, Bigtable): rows partitioned by a key, with very high write throughput and queries that follow the partition design. Good for time series and event logs at scale.
+- **Graph** (Neo4j): nodes and edges with fast traversal. Good for "friends of friends" and recommendation paths where joins would explode.
+
+### Postgres can be a document store
+
+Postgres stores JSON as `jsonb` and can index it. On 300 000 events with a `data jsonb` column, finding events where `data @> '{"type":"buy","user":42}'`:
+
+```text file=jsonb.txt
+no index:                Seq Scan, 299 940 rows filtered,  about 51 ms
+GIN index (jsonb_path_ops): Bitmap index scan,             about 0.45 ms
+```
+
+The table was 31 MB and the GIN index about 3 MB. So if you need flexible attributes next to transactional data, `jsonb` plus a GIN index often removes the reason for a second database. You keep transactions, joins and one backup story.
+
+### What the schema looks like without a schema
+
+Nothing stops a writer from sending the wrong type:
+
+```sql file=drift.sql mark=1,2
+INSERT INTO ev(data) VALUES ('{"type":"click","user":"forty-two"}');   -- user is a string here, a number everywhere else
+SELECT count(*) FROM ev WHERE jsonb_typeof(data->'user') = 'string';   -- 1
+```
+
+The insert succeeded. A report that adds up `user` ids now breaks on one row. With a document store, enforce shape in application validation (the A5 techniques), version your documents, and migrate old ones deliberately. Where the structure matters (money, inventory), keep those columns relational and put only the variable part in JSON.
+
+### Consistency and joins
+
+Many NoSQL stores trade strong consistency, multi-row transactions or joins for scale and availability. That is a good deal when you can model around it (denormalise, one document per access pattern) and a bad one when your domain is relational. Design for the queries first: in a key-value or wide-column store the table layout *is* the query plan, and a new query shape can mean a new table or a migration.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Choosing a document store because the schema "might change", then discovering you need joins and transactions across collections. Relational databases handle schema change fine with migrations (B2).
+</Callout>
+
+- **Using two databases when one would do**, doubling operations and consistency problems.
+- **Modelling documents like tables** and performing application-side joins.
+- **Unbounded arrays inside documents** that grow until they hit size limits.
+- **Ignoring consistency settings** and assuming a read sees the last write.
+- **Picking by benchmark headlines** instead of your own access pattern.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+A specialised store can be simpler and faster for one pattern and loses the generality, joins and transactions of SQL. Every additional data store adds operations, backups, failure modes and a consistency boundary. The default should be Postgres, with an extra store added only when a measured need justifies it.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Decide ownership of each dataset (one system is the source of truth, the others are derived and rebuildable), validate document shapes on write, version documents, monitor store-specific signals (partition hot spots, replica lag), and rehearse restoring each store.
+</Callout>
+
+## Check yourself
+
+<Exercise id="nosql-family" kind="quiz" prompt="Which store type is built for fast lookup by a single key, such as a session id?" options={["Graph", "Key-value", "Relational with joins", "Wide-column only"]} answer={1} explain="Key-value stores are optimised for get and set by key, with almost no query capability beyond that." />
+
+<Exercise id="nosql-jsonb" kind="predict" prompt="A jsonb column has a GIN index and you query for rows containing type buy with the containment operator. Compared with no index on 300 000 rows, what is likely?" options={["No difference", "Orders of magnitude faster because the index finds matches without scanning every row", "Slower", "The query is rejected"]} answer={1} explain="A GIN index on jsonb supports containment queries, avoiding a sequential scan. In the lab it went from about 51 ms to under 1 ms." />
+
+<Exercise id="nosql-schema" kind="debug" prompt="A report that sums the user field fails because one document stores user as the string 'forty-two'. What is the underlying cause?" options={["JSON is too slow", "No database-enforced types, so a bad shape was accepted at write time", "The GIN index is corrupt", "Postgres cannot store strings"]} answer={1} explain="Schema flexibility moves validation into your code. Validate on write and version documents." />
+
+<Exercise id="nosql-choose" kind="scenario" prompt="You need orders with transactions and joins to customers, plus a flexible bag of per-product attributes. What is a sound starting design?" options={["Two separate databases", "Relational tables with a jsonb column for the flexible attributes", "A graph database", "A key-value store only"]} answer={1} explain="Keep transactional, relational data in tables and put only the variable part in jsonb, with one database and one backup story." />

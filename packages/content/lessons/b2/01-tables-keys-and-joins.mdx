@@ -1,0 +1,116 @@
+---
+chapter: B2
+slug: tables-keys-and-joins
+title: "Tables, keys, constraints and joins"
+order: 1
+summary: "The relational model stores facts in tables, links them with keys, and lets the database enforce rules with constraints. Joins recombine the pieces, and NULL behaves in ways that surprise everyone once."
+objectives:
+  - Explain primary keys, foreign keys and why constraints belong in the database
+  - Write inner and left joins and predict which rows each returns
+  - Describe NULL's three-valued logic and the NOT IN trap
+  - Know the difference between COUNT(*) and COUNT(column)
+concepts: [primary key, foreign key, constraint, inner join, left join, "NULL", three-valued logic, aggregate]
+reading:
+  - title: "PostgreSQL Tutorial: Joins"
+    url: "https://www.postgresql.org/docs/current/tutorial-join.html"
+  - title: "PostgreSQL docs: Constraints"
+    url: "https://www.postgresql.org/docs/current/ddl-constraints.html"
+misconceptions:
+  - belief: "The application can enforce data rules, so the database does not need constraints."
+    correction: "Several services, scripts and people write to a database, and application code has bugs and race conditions. Constraints are the one check that every writer must pass, so they are the last line of defence for data integrity."
+  - belief: "NULL = NULL is true, and NOT IN works the same with or without NULLs."
+    correction: "NULL means unknown, so comparing it with anything yields unknown, not true. A NOT IN list that contains a NULL matches nothing, which silently returns zero rows."
+---
+
+## Why it exists
+
+Storing a customer's name inside every one of their orders repeats data and invites contradictions. The relational model's answer is to keep each kind of fact in its own **table** and refer between tables by **key**. The database then guarantees the references stay valid, and a query recombines the pieces when you need them together.
+
+<Callout kind="why">
+Constraints turn rules ("an order belongs to a real customer", "a total is never negative") from hopes in application code into facts the database enforces for every writer.
+</Callout>
+
+## How it works
+
+The examples below run on PostgreSQL.
+
+```sql file=schema.sql mark=1,2,3
+CREATE TABLE customers (id int PRIMARY KEY, name text NOT NULL);
+CREATE TABLE orders (
+  id          int PRIMARY KEY,
+  customer_id int REFERENCES customers(id),
+  total       int NOT NULL CHECK (total >= 0)
+);
+INSERT INTO customers VALUES (1,'Asha'),(2,'Ben'),(3,'Chen');
+INSERT INTO orders VALUES (10,1,50),(11,1,70),(12,2,20),(13,NULL,5);
+```
+
+- A **primary key** uniquely identifies a row and cannot be NULL.
+- A **foreign key** (`REFERENCES`) says this column must match a row in another table. Violating it fails:
+
+```text file=fk-error.txt
+INSERT INTO orders VALUES (14, 99, 1);
+ERROR:  insert or update on table "orders" violates foreign key constraint "orders_customer_id_fkey"
+DETAIL:  Key (customer_id)=(99) is not present in table "customers".
+```
+
+- `NOT NULL` and `CHECK` reject bad values the same way (`total = -1` fails with a check-constraint error).
+
+### Joins
+
+An **inner join** returns only rows that match on both sides. A **left join** keeps every row from the left table and fills the right side with NULL when nothing matches.
+
+```sql file=joins.sql mark=1,4
+SELECT c.name, count(o.id) AS orders, coalesce(sum(o.total), 0) AS spent
+FROM customers c LEFT JOIN orders o ON o.customer_id = c.id
+GROUP BY c.name ORDER BY c.name;
+```
+
+The result is Asha 2 orders / 120, Ben 1 / 20 and Chen 0 / 0. Chen appears because of the left join; with an inner join Chen, who has no orders, would vanish, and so would order 13, which has no customer. Counting `o.id` (not `*`) is what gives Chen a zero, because `count(column)` skips NULLs while `count(*)` counts rows. On the orders table, `count(*)` is 4 but `count(customer_id)` is 3.
+
+### NULL means unknown
+
+```sql file=null.sql mark=1,2,3
+SELECT NULL = NULL;                       -- NULL, not true
+SELECT NULL IS NULL;                      -- true
+SELECT name FROM customers WHERE id NOT IN (SELECT customer_id FROM orders);
+-- zero rows! orders.customer_id contains a NULL
+SELECT name FROM customers c WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id);
+-- Chen
+```
+
+SQL has **three-valued logic**: true, false and unknown. `x NOT IN (1, 2, NULL)` can never be true, because "not equal to NULL" is unknown. The query for customers with no orders silently returned nothing. `NOT EXISTS` handles it correctly. Use `IS NULL` / `IS NOT NULL` to test for NULL.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Using `NOT IN` with a subquery that can return NULL. It returns no rows and raises no error, so the bug looks like "there is no data".
+</Callout>
+
+- **Missing foreign keys** "for performance", then cleaning up orphan rows forever.
+- **Inner join when you needed a left join**, silently dropping rows with no match.
+- **Filtering the right table in `WHERE` after a left join**, which turns it back into an inner join; put the condition in the `ON` clause.
+- **Joining without a proper condition**, producing a cross product of every pair of rows.
+- **Using floating point for money**; use integers of the smallest unit or `numeric`.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Constraints cost a little on every write and make some bulk loads and schema changes more careful. They buy correctness that no amount of application testing guarantees. Skip a constraint only when you have a specific, measured reason, and write down what you gave up.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Declare primary keys, foreign keys, `NOT NULL` and `CHECK` constraints in migrations, index foreign-key columns you join or delete by, and decide per foreign key what deleting a parent should do (restrict, cascade or set null) rather than taking the default by accident.
+</Callout>
+
+## Check yourself
+
+<Exercise id="sql-left-join" kind="predict" prompt="customers has Asha, Ben and Chen. Chen has no orders. What does customers LEFT JOIN orders return for Chen?" options={["No row for Chen", "One row for Chen with NULL order columns", "An error", "Two rows for Chen"]} answer={1} explain="A left join keeps every left-side row; when nothing matches, the right-side columns are NULL. An inner join would drop Chen." />
+
+<Exercise id="sql-null-in" kind="debug" prompt="SELECT name FROM customers WHERE id NOT IN (SELECT customer_id FROM orders) returns no rows, yet Chen has no orders. Why?" options={["Chen is hidden by a bug in PostgreSQL", "orders.customer_id contains a NULL, which makes NOT IN never true", "NOT IN is not valid SQL", "The foreign key blocks it"]} answer={1} explain="With a NULL in the list, 'id <> NULL' is unknown, so no row can satisfy NOT IN. Use NOT EXISTS or filter the NULLs out." />
+
+<Exercise id="sql-count" kind="quiz" prompt="A table has 4 rows and 1 of them has a NULL in column x. What do COUNT(*) and COUNT(x) return?" options={["4 and 4", "4 and 3", "3 and 3", "3 and 4"]} answer={1} explain="COUNT(*) counts rows, while COUNT(column) counts only rows where that column is not NULL." />
+
+<Exercise id="sql-constraint-where" kind="scenario" prompt="Three services and a nightly script all write to the orders table. Where should the rule 'total must not be negative' be enforced?" options={["Only in the web service", "In each service's code", "In the database with a CHECK constraint, plus application validation for good error messages", "In the browser"]} answer={2} explain="Only the database sees every write. A constraint guarantees the rule for all writers, and application validation gives users a friendlier message before the constraint is hit." />

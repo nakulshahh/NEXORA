@@ -1,0 +1,116 @@
+---
+chapter: "0.2"
+slug: names-and-addresses
+title: Names, addresses and ports
+order: 1
+summary: How a hostname becomes an IP address, and how an IP address plus a port becomes a specific program on a specific machine.
+objectives:
+  - Explain what an IP address, a port and a socket each identify
+  - Trace a DNS lookup through resolver, root, TLD and authoritative servers
+  - Predict when a cached answer is used and when it expires
+  - Distinguish dns.lookup from dns.resolve4 in Node.js
+concepts: [IP address, port, socket, DNS, resolver, TTL, A record]
+watch:
+  - title: "Roadmap for backend from first principles"
+    url: "https://www.youtube.com/watch?v=0Rwb4Xmlcwc"
+    channel: Sriniously
+reading:
+  - title: "RFC 1034 — Domain names: concepts and facilities"
+    url: "https://www.rfc-editor.org/rfc/rfc1034"
+misconceptions:
+  - belief: "A domain name is the address of a server."
+    correction: "A name is a label that DNS maps to one or more IP addresses, and that mapping can change at any time or differ per asker."
+  - belief: "One IP address means one website."
+    correction: "Many sites share one IP. The server tells them apart using the hostname the client sends inside the request."
+---
+
+## Why it exists
+
+Machines route packets by number. People remember words. Everything in this chapter exists to bridge those two facts: a **name** that humans type, an **IP address** that routers understand, and a **port** that picks one program out of everything running on that machine.
+
+<Callout kind="why">
+Without ports, a machine with one IP address could run exactly one network program. Without DNS, every address change would break every bookmark on earth.
+</Callout>
+
+## How it works
+
+### Three identifiers, three jobs
+
+An **IP address** identifies a network interface, for example `93.184.216.34` for IPv4 or `2606:2800:220:1::` for IPv6. A **port** is a 16-bit number (0 to 65535) that identifies one program listening on that interface. The pair `(IP, port)` is an endpoint. A TCP connection is identified by *four* values: source IP, source port, destination IP, destination port. That four-tuple is what the operating system uses to hand incoming bytes to the right process.
+
+Your browser does not choose port 443 for itself. It connects *to* 443 on the server, and the OS silently picks a free **ephemeral** source port, usually somewhere above 32768, for its own end.
+
+### Resolving a name
+
+When you type `api.example.com`, a library asks a **recursive resolver** (usually run by your ISP, your company or a public provider) for its address. If the resolver has no fresh cached answer, it walks the hierarchy:
+
+1. Ask a **root server**: "who handles `.com`?" It replies with the TLD servers.
+2. Ask a **TLD server**: "who handles `example.com`?" It replies with the domain's authoritative servers.
+3. Ask the **authoritative server**: "what is the A record for `api.example.com`?" It replies with an IP and a **TTL**.
+
+The resolver caches the answer for TTL seconds and returns it to you. The next asker inside that window never leaves the resolver.
+
+<Sim id="dns" />
+
+<Seq participants={["App", "Resolver", "Root", "TLD (.com)", "Authoritative"]} messages={[
+  {"from":0,"to":1,"label":"A api.example.com?"},
+  {"from":1,"to":2,"label":"who has .com?"},
+  {"from":2,"to":1,"label":"TLD servers"},
+  {"from":1,"to":3,"label":"who has example.com?"},
+  {"from":3,"to":1,"label":"authoritative NS"},
+  {"from":1,"to":4,"label":"A api.example.com?"},
+  {"from":4,"to":1,"label":"93.184.216.34, TTL 300"},
+  {"from":1,"to":0,"label":"93.184.216.34"}
+]} />
+
+### In Node.js
+
+Node gives you two different doors, and they behave differently:
+
+```js file=resolve.mjs mark=4,7
+import dns from "node:dns/promises";
+
+// Talks DNS directly to the configured resolver. Returns every A record.
+const records = await dns.resolve4("example.com", { ttl: true });
+console.log(records); // [{ address: '...', ttl: 123 }]
+
+// Uses the OS lookup (getaddrinfo): honours /etc/hosts and OS caching.
+const { address } = await dns.lookup("example.com");
+console.log(address);
+```
+
+`dns.lookup` is what `fetch` and `net.connect` use. It runs in libuv's thread pool, so a burst of slow lookups can queue behind each other and starve other pool work such as file I/O. `dns.resolve4` uses a real DNS client (c-ares) and does not.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Treating a TTL as a promise. It is an upper bound on how long a *well-behaved* cache may keep an answer. Some resolvers and some JVM and OS settings cache longer, so a DNS change is never instantly global.
+</Callout>
+
+- **Hardcoding IPs** for a service you do not control. The address will change, and the failure will look like an outage.
+- **Assuming one record.** `resolve4` can return several addresses. Clients are expected to try more than one.
+- **Debugging with the wrong tool.** `dig` asks DNS directly. Your app may be using `/etc/hosts`. When they disagree, you are looking at two different doors.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Short TTLs let you move traffic fast (failover, migrations) but multiply resolver load and add a lookup to more requests. Long TTLs are fast and cheap but make mistakes slow to undo. Lower the TTL *before* a planned migration, not during it.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Every outbound call from your service starts with a lookup. At high request rates, uncached `dns.lookup` calls are a classic cause of mysterious latency spikes and thread-pool starvation. Cache resolved addresses in-process (respecting TTL) or put a local caching resolver next to the service.
+</Callout>
+
+Kubernetes and service meshes lean heavily on DNS for service discovery. Short TTLs there are deliberate, and so is the need to cache sensibly on the client side.
+
+## Check yourself
+
+<Exercise id="ports-identify" kind="quiz" prompt="A server listens on one IP address and one port. How can it hold thousands of simultaneous TCP connections to different clients?" options={["Each connection gets its own server port", "Connections are distinguished by the full four-tuple, so many clients can share the same server IP and port", "It cannot; it must fork one process per port", "UDP is used for the extra connections"]} answer={1} explain="A TCP connection is identified by source IP, source port, destination IP and destination port. Clients differ in source IP or source port, so the same server endpoint serves them all." />
+
+<Exercise id="ttl-cache" kind="predict" prompt="A record has TTL 300. At t=0 a resolver fetches it. At t=100 you change the record at the authoritative server. A client asks that resolver at t=200. What does it get?" options={["The new address", "The old address, because the cached copy is still within its TTL", "An error until the cache is flushed", "Both addresses"]} answer={1} explain="The resolver is allowed to serve its cached copy until t=300. Changes propagate only as old cached entries expire." />
+
+<Exercise id="lookup-vs-resolve" kind="scenario" prompt="Your Node service makes thousands of short outbound requests per second and you see sporadic latency spikes that also slow down file reads. What is the most plausible cause to investigate first?" options={["TCP slow start", "dns.lookup calls queueing in the libuv thread pool", "TLS certificate size", "Too many ephemeral ports"]} answer={1} explain="dns.lookup uses getaddrinfo on the shared thread pool (default 4 threads). Slow lookups can occupy every thread and delay unrelated pool work such as fs operations." />
+
+<Exercise id="host-vs-ip" kind="quiz" prompt="Two different websites resolve to the same IP address. How does the server know which one a request is for?" options={["It reverse-resolves the client", "The hostname is carried in the request (the Host header, or SNI during TLS)", "Each site uses a different TCP port automatically", "It cannot; this setup is impossible"]} answer={1} explain="Name-based virtual hosting: the client states which hostname it wants inside the request, so one IP can serve many sites." />

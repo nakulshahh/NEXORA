@@ -1,0 +1,113 @@
+---
+chapter: B8
+slug: inverted-indexes-and-text-search
+title: "Full-text search: inverted indexes, stemming and ranking"
+order: 1
+summary: "LIKE with a leading wildcard scans every row. A full-text index maps each word to the documents containing it, so search is a lookup. Tokenising, stemming and stop words decide what matches."
+objectives:
+  - Explain an inverted index and why it beats scanning
+  - Show how tokenising, stop words and stemming change what matches
+  - Use Postgres to_tsvector, to_tsquery and a GIN index, and read the speedup
+  - Know where Postgres full-text search stops and a search engine begins
+concepts: [inverted index, tokenisation, stemming, stop words, tsvector, tsquery, GIN, ranking, relevance]
+reading:
+  - title: "PostgreSQL docs: Full Text Search"
+    url: "https://www.postgresql.org/docs/current/textsearch.html"
+  - title: "Stanford IR book: Inverted index"
+    url: "https://nlp.stanford.edu/IR-book/html/htmledition/a-first-take-at-building-an-inverted-index-1.html"
+misconceptions:
+  - belief: "LIKE '%word%' is fine for search."
+    correction: "A leading wildcard cannot use an ordinary B-tree index, so the database reads every row. It also matches substrings, not words, and knows nothing about plurals or relevance."
+  - belief: "Full-text search matches exactly the words typed."
+    correction: "Text is normalised first: lower-cased, split into tokens, stop words dropped and words reduced to stems, so 'running' can match 'run' and 'caches' can match 'cache'."
+---
+
+## Why it exists
+
+Users type words, not exact substrings, and expect plural forms, speed and sensible ordering. A B-tree answers "equals" and "starts with" well, but "contains the word cache" over millions of documents needs a different structure.
+
+<Callout kind="why">
+An **inverted index** is the book-index idea: instead of document to words, store word to documents. Finding documents with a word becomes a lookup, the same trade as every index: space and write cost for fast reads.
+</Callout>
+
+## How it works
+
+### The inverted index
+
+Given three documents, build a map from each normalised word to the ids of documents containing it:
+
+```text file=inverted.txt
+doc1: "cache the queue"      cache -> {1, 3}
+doc2: "queue the lock"       queue -> {1, 2}
+doc3: "cache the lock"       lock  -> {2, 3}
+```
+
+A query for `cache AND lock` intersects two sorted lists and gets document 3 without reading any document. Production indexes also store word positions (for phrases) and frequencies (for ranking).
+
+### Normalising text
+
+Postgres turns text into a `tsvector`: tokens, stop words removed, stems applied.
+
+```sql file=ts.sql mark=1,3
+SELECT to_tsvector('english', 'The caches were running quickly');
+-- 'cach':2 'quick':5 'run':4
+SELECT to_tsvector('english', 'The caches were running quickly') @@ to_tsquery('english', 'run & cache');
+-- true
+```
+
+"The" and "were" vanished (stop words), "caches" became `cach`, and "running" became `run`, so the query for "run" and "cache" matched. The query text goes through the same pipeline, which is why the two sides agree. Choose the language configuration to match your text; the wrong stemmer gives odd results.
+
+### Measured
+
+On 200 000 documents of about 12 words each (40 contain a rare word):
+
+```text file=fts.txt
+LIKE '%zebracrossing%':    Seq Scan, 199 960 rows filtered, about 27 ms
+GIN full-text index:       Bitmap index scan, 40 rows,      about 0.1 ms
+table 23 MB, GIN index 2.8 MB
+```
+
+Roughly 280 times faster for a rare term. For a very common word (160 000 of 200 000 documents contained `cach`), an index finds many rows and the gap shrinks, the same selectivity rule as B-trees.
+
+```sql file=gin.sql mark=1
+CREATE INDEX docs_gin ON docs USING gin (to_tsvector('english', body));
+-- queries must use the same expression to hit the index
+```
+
+### Ranking and its limits
+
+`ts_rank` scores documents by term frequency, so you can sort by relevance. It is basic. Search engines (Elasticsearch, OpenSearch, Meilisearch, Typesense) add stronger relevance models (BM25), typo tolerance, facets, highlighting, synonyms and distributed scaling. Use Postgres full-text for a few million documents and simple needs, and a search engine when relevance tuning, typo tolerance or scale demand it. A search engine becomes a **derived** data store: Postgres stays the source of truth and you keep the index in sync (via a queue, as in B7).
+
+## Common mistakes
+
+<Callout kind="mistake">
+Creating a GIN index on `to_tsvector('english', body)` and then querying with a different configuration or expression, so the planner cannot use it. Always check the plan.
+</Callout>
+
+- **Using LIKE** for natural-language search.
+- **Wrong language configuration**, so stemming misbehaves.
+- **Searching user-typed text with `to_tsquery`**, which errors on odd punctuation; use `websearch_to_tsquery` for user input.
+- **Letting the search index drift** from the source with no rebuild path.
+- **Forgetting that indexes slow writes** on frequently updated text.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Normalisation improves recall (more matches) at the price of precision (some surprising ones). A GIN index speeds reads and slows writes and uses space. An external search engine improves relevance and scale and adds an eventually consistent copy of your data to operate.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Keep a rebuild script for the index, measure query latency by term frequency, use `websearch_to_tsquery` for user input, debounce search-as-you-type, and test relevance with a small set of real queries and expected results.
+</Callout>
+
+## Check yourself
+
+<Exercise id="fts-why" kind="quiz" prompt="Why is a full-text search for a rare word fast with an inverted index?" options={["It scans faster", "It looks the word up and reads only the listed documents", "It caches every query", "It compresses the table"]} answer={1} explain="The index maps each word to the documents containing it, so only matching documents are visited." />
+
+<Exercise id="fts-stem" kind="predict" prompt="to_tsvector('english', 'The caches were running quickly') is matched with to_tsquery('english', 'run & cache'). What is the result?" options={["false, words differ", "true, stemming reduces both sides to the same tokens", "An error", "NULL"]} answer={1} explain="Stemming turns caches into cach and running into run, and the query is normalised the same way, so they match." />
+
+<Exercise id="fts-index" kind="debug" prompt="You created a GIN index on to_tsvector('english', body) but queries using to_tsvector('simple', body) are slow. Why?" options={["GIN is broken", "The query expression differs from the indexed one, so the index cannot be used", "Simple is too simple", "The table is too small"]} answer={1} explain="An expression index only serves queries that use the identical expression and configuration." />
+
+<Exercise id="fts-engine" kind="scenario" prompt="You need typo tolerance, faceted filters and tuned relevance across 50 million documents. What is the usual choice?" options={["LIKE with wildcards", "A dedicated search engine kept in sync with the source of truth", "A bigger B-tree", "Redis eviction"]} answer={1} explain="Search engines specialise in relevance, typo tolerance and scale. Keep the primary database authoritative and feed the engine from it." />

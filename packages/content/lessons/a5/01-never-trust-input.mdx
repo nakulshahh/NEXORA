@@ -1,0 +1,110 @@
+---
+chapter: A5
+slug: never-trust-input
+title: "Never trust input: validate at the edge"
+order: 1
+summary: "Everything that crosses your boundary is attacker-controlled text. Check its shape once, at the edge, and let only a known-good value into the rest of the program."
+objectives:
+  - Explain why client-side checks never replace server-side validation
+  - Distinguish validating (accept or reject) from sanitising (alter) and escaping (encode for an output)
+  - Write a parser that returns a clean value or a list of field errors
+  - Prevent mass assignment by choosing fields explicitly
+concepts: [validation, trust boundary, allow-list, mass assignment, sanitising, escaping, schema]
+reading:
+  - title: "OWASP: Input Validation Cheat Sheet"
+    url: "https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html"
+  - title: "OWASP: Mass Assignment Cheat Sheet"
+    url: "https://cheatsheetseries.owasp.org/cheatsheets/Mass_Assignment_Cheat_Sheet.html"
+misconceptions:
+  - belief: "The form already checks the fields, so the server can trust them."
+    correction: "Client-side checks are a convenience for honest users. Anyone can send a request with curl or a script that skips the form entirely, so the server must check everything again."
+  - belief: "Validation and sanitising are the same thing."
+    correction: "Validation decides accept or reject. Sanitising silently changes the data to something acceptable, which can hide attacks and corrupt legitimate input. Escaping is different again: it encodes a value for one specific output such as HTML or SQL."
+---
+
+## Why it exists
+
+Your server's job begins where someone else's program ends. A request body, a query string, a header, a cookie, a path segment and an uploaded file are all text chosen by whoever sent them. That line between "bytes I received" and "values my code can rely on" is the **trust boundary**.
+
+Code deep inside your program makes assumptions: `age` is a number, `email` is a string, `items` is an array. If those assumptions are false you get crashes at best and security holes at worst. Validation is how you turn "whatever arrived" into "something my code is allowed to assume".
+
+<Callout kind="why">
+Check once, at the boundary, and produce a trusted value. Then the rest of the program can be written without defensive checks on every line.
+</Callout>
+
+## How it works
+
+### Reject, do not repair
+
+Prefer an **allow-list**: describe exactly what is valid and refuse everything else. A deny-list ("reject strings containing `<script>`") always misses a variant you did not think of.
+
+A parser takes untrusted input and returns either a clean value or a set of field errors:
+
+```js file=parse-user.mjs mark=3,9,10
+function parseCreateUser(body) {
+  const errors = {};
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return { ok: false, errors: { _: "body must be an object" } };
+  }
+  const { email, age } = body;
+  if (typeof email !== "string" || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) errors.email = "must be an email";
+  if (!Number.isInteger(age) || age < 13 || age > 120) errors.age = "must be an integer from 13 to 120";
+  if (Object.keys(errors).length) return { ok: false, errors };
+  return { ok: true, value: { email: email.trim().toLowerCase(), age } };
+}
+```
+
+Three things to notice. It checks the **type** first (a number sent as the string `"30"` is rejected, not guessed at). It collects **all** errors so the caller fixes everything in one round trip. And on success it builds a **new object** from named fields.
+
+### Mass assignment
+
+That last point matters. Suppose the handler did `db.users.insert(req.body)`. A client who adds `"isAdmin": true` to the JSON has just promoted themselves. Building the value from explicit fields means anything you did not name is dropped:
+
+```js file=mass-assignment.mjs mark=1
+parseCreateUser({ email: "A@x.io", age: 30, isAdmin: true });
+// { ok: true, value: { email: "a@x.io", age: 30 } }   isAdmin is gone
+```
+
+### Three different jobs
+
+| Job | Question it answers | Example |
+|---|---|---|
+| **Validate** | Is this acceptable at all? | reject `age: "abc"` with 400 |
+| **Normalise** | Is there one canonical form? | trim and lower-case an email |
+| **Escape** | Is it safe in *this* output? | HTML-encode when rendering, parameterise SQL |
+
+Validation does not make a value safe for every sink. A perfectly valid name such as `O'Brien` still breaks naive string-built SQL. Escape or parameterise at the point of use, and validate at the point of entry.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Trusting the browser form. The frontend check improves the experience; the server check is the only one that protects you.
+</Callout>
+
+- **Validating only some fields** and passing the rest of the object through.
+- **Checking after use**, for example reading `req.body.limit` into a database query before validating it.
+- **Silent repair.** Turning `"abc"` into `0` hides bugs in clients and attacks alike.
+- **Checking the type loosely.** `age == 30` is true for the string `"30"`.
+- **Unbounded input.** Without maximum lengths and body-size limits, a valid-looking 500 MB string is a denial of service.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Strict validation rejects some clients that were "almost right", which can break integrations. Lenient validation keeps them working but spreads ambiguity into your data. Be strict about what you accept now; you can always loosen later, but you can rarely tighten a rule that clients already depend on.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Describe input once as a schema (a validation library or JSON Schema) rather than hand-writing checks per route, set a maximum request body size, and return a consistent error shape. Log rejected requests at a low level: a spike of validation failures is often the first sign of a probing attacker or a broken client release.
+</Callout>
+
+## Check yourself
+
+<Exercise id="validate-client-side" kind="quiz" prompt="Your signup form validates the email in JavaScript before submitting. Why must the server validate it again?" options={["Browsers cannot run regular expressions", "Requests can be sent without the form, so only server-side checks protect the server", "Servers are faster at validation", "HTTPS removes the client's validation"]} answer={1} explain="The server cannot know that the request came from your form. Anyone can send the same HTTP request with a script, skipping every client-side check." />
+
+<Exercise id="validate-predict-string-age" kind="predict" prompt="With the parseCreateUser function above, what does parseCreateUser({ email: 'A@x.io', age: '30' }) return?" options={["{ ok: true, value: { email: 'a@x.io', age: 30 } }", "{ ok: false, errors: { age: 'must be an integer from 13 to 120' } }", "{ ok: false, errors: { email: 'must be an email' } }", "It throws a TypeError"]} answer={1} explain="Number.isInteger('30') is false because the value is a string, so age fails. The email is valid, so only age is reported." />
+
+<Exercise id="validate-mass-assignment" kind="debug" prompt="A handler runs db.users.insert(req.body). A client posts { email, password, role: 'admin' }. What is the flaw?" options={["JSON cannot contain a role field", "Mass assignment: the client chose a field it should not control", "The email is not hashed", "insert should be update"]} answer={1} explain="The handler copies whatever the client sent. Build the record from explicitly named, validated fields so privileged fields can only be set by your own code." />
+
+<Exercise id="validate-vs-escape" kind="scenario" prompt="A valid name O'Brien is concatenated into an SQL string and the query fails. Which fix addresses the actual problem?" options={["Reject names containing an apostrophe", "Use a parameterised query so the value is never parsed as SQL", "Validate the name harder", "Convert the name to lower case"]} answer={1} explain="The name is legitimate input. The bug is building SQL from strings. Parameters keep data and code separate at the point of use, which validation alone cannot do." />

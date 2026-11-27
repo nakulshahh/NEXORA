@@ -1,0 +1,537 @@
+{
+ "note": "Written from the lesson contents, before looking at retrieval output. 'split' alternates dev/test: thresholds are calibrated on dev only and reported on test. 'expect' lists lessons that genuinely contain the answer (any one counts). 'paraphrase' marks questions that deliberately avoid the lessons' own vocabulary.",
+ "in_scope": [
+  {
+   "q": "Why does a server keep running instead of exiting after one request?",
+   "expect": [
+    "0.1/what-a-backend-is"
+   ]
+  },
+  {
+   "q": "What is the difference between a framework and a backend?",
+   "expect": [
+    "0.1/what-a-backend-is"
+   ]
+  },
+  {
+   "q": "Where does the time go when a page loads slowly for users far away?",
+   "expect": [
+    "0.1/anatomy-of-a-request"
+   ]
+  },
+  {
+   "q": "Which steps can be skipped on a second request over the same connection?",
+   "expect": [
+    "0.1/anatomy-of-a-request"
+   ]
+  },
+  {
+   "q": "How does a domain name turn into an IP address?",
+   "expect": [
+    "0.2/names-and-addresses"
+   ]
+  },
+  {
+   "q": "What does the port number do?",
+   "expect": [
+    "0.2/names-and-addresses"
+   ]
+  },
+  {
+   "q": "How long can a DNS answer be cached?",
+   "expect": [
+    "0.2/names-and-addresses"
+   ]
+  },
+  {
+   "q": "Why does opening a TCP connection cost a round trip?",
+   "expect": [
+    "0.2/tcp-handshake"
+   ]
+  },
+  {
+   "q": "What are SYN and ACK packets for?",
+   "expect": [
+    "0.2/tcp-handshake"
+   ]
+  },
+  {
+   "q": "Does TCP keep message boundaries?",
+   "expect": [
+    "0.2/tcp-handshake"
+   ]
+  },
+  {
+   "q": "What happens when a TCP packet is lost?",
+   "expect": [
+    "0.2/tcp-handshake"
+   ]
+  },
+  {
+   "q": "What does TLS protect and what does it not hide?",
+   "expect": [
+    "0.2/tls"
+   ]
+  },
+  {
+   "q": "How does the browser know a certificate is genuine?",
+   "expect": [
+    "0.2/tls"
+   ]
+  },
+  {
+   "q": "How many round trips does a TLS 1.3 handshake need?",
+   "expect": [
+    "0.2/tls"
+   ]
+  },
+  {
+   "q": "How does the server know where the HTTP body ends?",
+   "expect": [
+    "A1/http-messages"
+   ]
+  },
+  {
+   "q": "What does it mean that HTTP is stateless?",
+   "expect": [
+    "A1/http-messages",
+    "A4/passwords-and-sessions"
+   ]
+  },
+  {
+   "q": "What does a raw HTTP request look like on the wire?",
+   "expect": [
+    "A1/http-messages"
+   ]
+  },
+  {
+   "q": "Which HTTP methods are idempotent?",
+   "expect": [
+    "A1/methods-status-headers"
+   ]
+  },
+  {
+   "q": "What is the difference between a 4xx and a 5xx status code?",
+   "expect": [
+    "A1/methods-status-headers"
+   ]
+  },
+  {
+   "q": "How does an ETag save bandwidth?",
+   "expect": [
+    "A1/methods-status-headers"
+   ]
+  },
+  {
+   "q": "Why does my browser block a request to another origin?",
+   "expect": [
+    "A1/cors"
+   ]
+  },
+  {
+   "q": "What is a CORS preflight request?",
+   "expect": [
+    "A1/cors"
+   ]
+  },
+  {
+   "q": "What counts as the same origin?",
+   "expect": [
+    "A1/cors"
+   ]
+  },
+  {
+   "q": "How can one thread handle many connections in Node?",
+   "expect": [
+    "0.3/io-models-and-threads",
+    "0.3/the-node-event-loop"
+   ]
+  },
+  {
+   "q": "What is the difference between concurrency and parallelism?",
+   "expect": [
+    "0.3/io-models-and-threads"
+   ]
+  },
+  {
+   "q": "What goes wrong if I block the event loop with heavy computation?",
+   "expect": [
+    "0.3/io-models-and-threads",
+    "0.3/the-node-event-loop"
+   ]
+  },
+  {
+   "q": "In what order do nextTick, promises and timers run?",
+   "expect": [
+    "0.3/the-node-event-loop"
+   ]
+  },
+  {
+   "q": "Why does setTimeout with zero delay not run immediately?",
+   "expect": [
+    "0.3/the-node-event-loop"
+   ]
+  },
+  {
+   "q": "What is the difference between setImmediate and setTimeout?",
+   "expect": [
+    "0.3/the-node-event-loop"
+   ]
+  },
+  {
+   "q": "How does the router choose between /users/me and /users/:id?",
+   "expect": [
+    "A2/order-specificity-and-edge-cases"
+   ]
+  },
+  {
+   "q": "When should a route return 405 instead of 404?",
+   "expect": [
+    "A2/routes-are-a-table"
+   ]
+  },
+  {
+   "q": "Why would a trailing slash create duplicate pages?",
+   "expect": [
+    "A2/order-specificity-and-edge-cases"
+   ]
+  },
+  {
+   "q": "How are path parameters extracted from a URL?",
+   "expect": [
+    "A2/routes-are-a-table"
+   ]
+  },
+  {
+   "q": "Why is a string length different from its number of bytes?",
+   "expect": [
+    "A3/text-bytes-and-json"
+   ]
+  },
+  {
+   "q": "Why do large ids break when sent as JSON numbers?",
+   "expect": [
+    "A3/text-bytes-and-json"
+   ]
+  },
+  {
+   "q": "Why should I not use floats for money?",
+   "expect": [
+    "A3/text-bytes-and-json",
+    "A3/binary-formats-and-schemas"
+   ]
+  },
+  {
+   "q": "How does protobuf encode a number in fewer bytes?",
+   "expect": [
+    "A3/binary-formats-and-schemas"
+   ]
+  },
+  {
+   "q": "Is it safe to reuse a retired protobuf field number?",
+   "expect": [
+    "A3/binary-formats-and-schemas"
+   ]
+  },
+  {
+   "q": "When is a binary format better than JSON?",
+   "expect": [
+    "A3/binary-formats-and-schemas"
+   ]
+  },
+  {
+   "q": "How should passwords be stored?",
+   "expect": [
+    "A4/passwords-and-sessions"
+   ]
+  },
+  {
+   "q": "What do the HttpOnly and SameSite cookie flags do?",
+   "expect": [
+    "A4/passwords-and-sessions"
+   ]
+  },
+  {
+   "q": "How does a session cookie keep me logged in?",
+   "expect": [
+    "A4/passwords-and-sessions"
+   ]
+  },
+  {
+   "q": "Can a JWT be revoked?",
+   "expect": [
+    "A4/tokens-and-authorization"
+   ]
+  },
+  {
+   "q": "What is an IDOR bug?",
+   "expect": [
+    "A4/tokens-and-authorization"
+   ]
+  },
+  {
+   "q": "Is a JWT encrypted?",
+   "expect": [
+    "A4/tokens-and-authorization"
+   ]
+  },
+  {
+   "q": "Why is the first request to a faraway site so sluggish?",
+   "expect": [
+    "0.2/tcp-handshake",
+    "0.2/tls",
+    "0.1/anatomy-of-a-request"
+   ],
+   "tag": "paraphrase"
+  },
+  {
+   "q": "How do I stop users reading each other's records by editing a number in the address bar?",
+   "expect": [
+    "A4/tokens-and-authorization"
+   ],
+   "tag": "paraphrase"
+  },
+  {
+   "q": "Why do my two server copies each show different counts?",
+   "expect": [
+    "0.1/what-a-backend-is"
+   ],
+   "tag": "paraphrase"
+  },
+  {
+   "q": "Why is a lookup with an index so much faster than a scan?",
+   "expect": [
+    "B3/btree-indexes"
+   ]
+  },
+  {
+   "q": "What does a left join do when there is no matching row?",
+   "expect": [
+    "B2/tables-keys-and-joins"
+   ]
+  },
+  {
+   "q": "Why do two requests adding to the same balance lose an update?",
+   "expect": [
+    "B4/isolation-levels"
+   ]
+  },
+  {
+   "q": "How can I rename a column without downtime?",
+   "expect": [
+    "B2/normalisation-and-migrations"
+   ]
+  },
+  {
+   "q": "Why does a pool queue queries instead of opening more connections?",
+   "expect": [
+    "B1/connection-pools"
+   ]
+  },
+  {
+   "q": "What is database sharding?",
+   "expect": [
+    "C4/replication-sharding-and-limits-of-scaling"
+   ]
+  },
+  {
+   "q": "What happens to a cache when memory is full?",
+   "expect": [
+    "B6/cache-aside-and-eviction"
+   ]
+  },
+  {
+   "q": "What is a cache stampede and how do I stop it?",
+   "expect": [
+    "B6/invalidation-and-stampedes"
+   ]
+  },
+  {
+   "q": "How do two workers avoid taking the same job from a queue?",
+   "expect": [
+    "B7/queues-and-workers"
+   ]
+  },
+  {
+   "q": "Why add jitter to retries?",
+   "expect": [
+    "B7/retries-backoff-idempotency"
+   ]
+  },
+  {
+   "q": "How does a parameterised query stop injection?",
+   "expect": [
+    "C3/injection-and-password-storage"
+   ]
+  },
+  {
+   "q": "How does a token bucket limit requests?",
+   "expect": [
+    "C3/rate-limiting-and-owasp"
+   ]
+  },
+  {
+   "q": "Why is round robin not always a good way to balance load?",
+   "expect": [
+    "C4/proxies-and-load-balancing"
+   ]
+  },
+  {
+   "q": "Why does LIKE with a leading wildcard scan every row?",
+   "expect": [
+    "B8/inverted-indexes-and-text-search"
+   ]
+  },
+  {
+   "q": "How do I stop the search index disagreeing with the database?",
+   "expect": [
+    "B8/keeping-search-in-sync"
+   ]
+  },
+  {
+   "q": "What are the states of a circuit breaker?",
+   "expect": [
+    "B9/timeouts-and-circuit-breakers"
+   ]
+  },
+  {
+   "q": "Why do retries make an outage worse?",
+   "expect": [
+    "B9/retry-storms-and-cascades"
+   ]
+  },
+  {
+   "q": "How does protobuf encode a number in fewer bytes than JSON?",
+   "expect": [
+    "B10/grpc-and-protobuf"
+   ]
+  },
+  {
+   "q": "What should I do if an API key was committed to git?",
+   "expect": [
+    "B11/configuration-and-secrets"
+   ]
+  },
+  {
+   "q": "When should I use a document store instead of Postgres?",
+   "expect": [
+    "B5/nosql-and-data-model-tradeoffs"
+   ]
+  },
+  {
+   "q": "What does exit code 143 mean?",
+   "expect": [
+    "0.4/processes-signals-and-exit-codes"
+   ]
+  },
+  {
+   "q": "How do I find which process is using a port?",
+   "expect": [
+    "0.4/files-permissions-and-the-dev-environment"
+   ]
+  },
+  {
+   "q": "Why is p99 latency more useful than the average?",
+   "expect": [
+    "C1/logs-metrics-and-traces"
+   ]
+  },
+  {
+   "q": "How is an error budget calculated?",
+   "expect": [
+    "C1/alerts-slos-and-debugging"
+   ]
+  },
+  {
+   "q": "How do I stop a server without dropping in-flight requests?",
+   "expect": [
+    "C2/graceful-shutdown"
+   ]
+  },
+  {
+   "q": "Why can Node have a race condition if it is single-threaded?",
+   "expect": [
+    "C5/races-locks-and-atomics"
+   ]
+  },
+  {
+   "q": "How do I prevent two locks causing a deadlock?",
+   "expect": [
+    "C5/deadlocks-and-worker-models"
+   ]
+  },
+  {
+   "q": "How does Kafka partition messages?",
+   "expect": [
+    "D5/brokers-logs-and-offsets"
+   ]
+  },
+  {
+   "q": "Why do Docker builds copy package files before the source?",
+   "expect": [
+    "D1/images-layers-and-the-build-cache"
+   ]
+  },
+  {
+   "q": "Why does localhost not reach another container?",
+   "expect": [
+    "D1/running-containers-compose-and-networking"
+   ]
+  },
+  {
+   "q": "What is the difference between a readiness and a liveness probe?",
+   "expect": [
+    "D2/kubernetes-scheduling-and-rollouts"
+   ]
+  },
+  {
+   "q": "What is a canary deployment?",
+   "expect": [
+    "D3/ci-cd-pipelines"
+   ]
+  },
+  {
+   "q": "Why shouldn't integration tests mock the database?",
+   "expect": [
+    "D4/what-to-test-and-the-test-pyramid",
+    "D4/testing-http-and-database-code"
+   ]
+  },
+  {
+   "q": "How does a consumer end up processing a message twice?",
+   "expect": [
+    "D5/brokers-logs-and-offsets",
+    "D5/event-driven-design-and-delivery"
+   ]
+  },
+  {
+   "q": "How does the WebSocket handshake work?",
+   "expect": [
+    "D6/websockets-and-realtime-fanout"
+   ]
+  }
+ ],
+ "out_of_scope": [
+  "How do I train a neural network?",
+  "What is the capital of France?",
+  "Explain Kubernetes ingress controllers.",
+  "What is GraphQL and how do subscriptions work?",
+  "How do I deploy a Docker container to AWS?",
+  "Explain the CAP theorem.",
+  "Tell me a joke.",
+  "What is the best programming language?",
+  "How do I center a div in CSS?",
+  "How do I configure Terraform remote state?",
+  "Explain Terraform state locking.",
+  "How do Ansible playbooks work?",
+  "What are Cassandra tombstones?",
+  "How do Redis cluster hash slots work?",
+  "How does the MongoDB aggregation pipeline work?",
+  "How do I write a PromQL query?",
+  "How do I write a Jenkins pipeline?",
+  "How do nginx rewrite rules work?",
+  "How does the Rust borrow checker work?",
+  "What is a Kubernetes operator?",
+  "How does Raft leader election work?"
+ ]
+}

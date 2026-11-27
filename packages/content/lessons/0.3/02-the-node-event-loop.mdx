@@ -1,0 +1,97 @@
+---
+chapter: "0.3"
+slug: the-node-event-loop
+title: "The Node.js event loop, step by step"
+order: 2
+summary: Microtasks, timers and I/O callbacks run in a fixed order. Learn the order, predict it, then check your prediction in the lab.
+objectives:
+  - "State the order: synchronous code, nextTick, microtasks, then loop phases"
+  - Predict the output of a program mixing promises, timers and immediates
+  - Explain why setTimeout(0) is not immediate
+  - Recognise which orderings are guaranteed and which are not
+concepts: [call stack, microtask, nextTick, timers phase, poll phase, check phase, setImmediate]
+reading:
+  - title: "Node.js docs: Event loop, timers and nextTick"
+    url: "https://nodejs.org/en/learn/asynchronous-work/event-loop-timers-and-nexttick"
+misconceptions:
+  - belief: "setTimeout(fn, 0) runs fn right away."
+    correction: "It schedules fn for a later turn of the loop, at least about 1 ms away. Everything synchronous, plus all queued promise callbacks, runs first."
+  - belief: "Promises and timers are the same kind of asynchronous."
+    correction: "Promise callbacks are microtasks, drained completely between steps. Timers wait for the timers phase of the next loop turn. Microtasks always win."
+---
+
+## Why it exists
+
+Because your code runs on one thread, the order in which callbacks run is the order of your program's behaviour. Bugs like "why did this log appear before that one" and "why does my handler see stale data" are order bugs. A small, fixed set of rules decides the order. Learn them and you can predict it.
+
+<Callout kind="why">
+Without the rules, async code looks random. With them, it is deterministic enough to compute by hand.
+</Callout>
+
+## How it works
+
+### The rules, in the order they apply
+
+1. Run the **main script** to the end (the call stack empties).
+2. Run all `process.nextTick` callbacks, then all **microtasks** (promise `.then` and `await` continuations). Repeat until both queues are empty.
+3. Enter the loop. Each turn visits phases in order: **timers** (due `setTimeout`/`setInterval`), then **poll** (I/O callbacks, waiting here if nothing else is pending), then **check** (`setImmediate`).
+4. After each individual callback, step 2 happens again: nextTick and microtasks drain.
+
+### A first prediction
+
+```js file=order.cjs mark=2,3,4,5
+console.log("1 sync");
+setTimeout(() => console.log("5 timeout"), 0);
+setImmediate(() => console.log("6 immediate"));
+Promise.resolve().then(() => console.log("4 promise"));
+process.nextTick(() => console.log("3 nextTick"));
+console.log("2 sync");
+```
+
+Synchronous lines first (1, 2). Then nextTick (3), then the promise microtask (4). Then the loop begins. The timer and the immediate are the interesting pair, and the next section explains why they are not guaranteed in a fixed order from the main script.
+
+### Timer versus immediate
+
+`setTimeout(fn, 0)` really means "at least about 1 ms from now". If the main script finishes in under a millisecond, the loop may reach the timers phase before the timer is due, run poll and check first, and fire the immediate before the timeout. If the script took longer, the timeout fires first. Inside an I/O callback, however, `setImmediate` always fires before any timer, because the loop is already past timers heading to check.
+
+<Callout kind="note">
+Try the lab below. It replays six programs step by step: the queues, nested scheduling, async functions, timers, I/O and the race above. The race program is flagged as non-deterministic on purpose.
+</Callout>
+
+<Sim id="event-loop" />
+
+### Starvation
+
+Because microtasks drain completely, a microtask that keeps scheduling another microtask never lets the loop move on. Timers and I/O starve. The same is true of a recursive `process.nextTick`. This is a real way to hang a server with no heavy computing.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Assuming `setTimeout(..., 0)` and `setImmediate` run in a guaranteed order from the main module. They do not. Only inside an I/O callback is the order fixed. Tests that rely on the race are flaky.
+</Callout>
+
+- **Using nextTick to "defer a little"** in library code, which can starve I/O.
+- **Forgetting that `await` continues as a microtask**, so code after it runs before any timer.
+- **Reasoning from a browser.** Browsers have a different loop model; Node's phases are specific to Node.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+The strict ordering makes code predictable but gives you tools that can starve the loop (nextTick, microtask chains). Prefer promises for ordinary async, and setImmediate or a timer when you truly want to let other work run first.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Services export an event-loop lag metric: how late a scheduled timer fires compared with when it was due. Rising lag means something is hogging the thread: a CPU-heavy handler, a synchronous call, or a microtask loop. It is one of the best single health signals for a Node service.
+</Callout>
+
+## Check yourself
+
+<Exercise id="order-basic" kind="predict" prompt="In the order.cjs program, which line prints third?" options={["2 sync", "3 nextTick", "4 promise", "5 timeout"]} answer={1} explain="Both sync lines print first. Then nextTick callbacks run before promise microtasks, so 3 nextTick prints third." />
+
+<Exercise id="await-order" kind="predict" prompt="async function f(){ await null; console.log('A'); } f(); setTimeout(()=>console.log('B'),0); console.log('C'); What is the output order?" options={["A, B, C", "C, A, B", "C, B, A", "B, C, A"]} answer={1} explain="C is synchronous. The continuation after await is a microtask and runs before the timer. So C, A, B." />
+
+<Exercise id="starve" kind="scenario" prompt="A function recursively schedules itself with Promise.resolve().then(self). Your server stops answering HTTP requests, yet no function shows heavy CPU work in a profile. Why?" options={["The microtask queue never empties, so the loop never reaches poll", "Promises leak sockets", "The timers phase is disabled", "HTTP needs setImmediate"]} answer={0} explain="Microtasks drain fully before the loop continues. A self-rescheduling microtask means the queue is never empty, so I/O callbacks never run." />
+
+<Exercise id="io-order" kind="quiz" prompt="Inside a fs.readFile callback you schedule both setTimeout(fn,0) and setImmediate(fn2). Which runs first?" options={["fn, the timeout", "fn2, the immediate, always", "Random", "Neither"]} answer={1} explain="After the poll phase the loop goes straight to check, where immediates run. The timers phase comes on the next turn, so the immediate wins deterministically." />

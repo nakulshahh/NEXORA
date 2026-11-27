@@ -1,0 +1,107 @@
+---
+chapter: D1
+slug: images-layers-and-the-build-cache
+title: "Docker images, layers and the build cache"
+order: 1
+summary: "A container is a process isolated by the kernel, started from an image built in layers. Ordering a Dockerfile so rarely changing steps come first keeps rebuilds fast, and multi-stage builds keep the final image small."
+objectives:
+  - Explain image, layer, container and registry
+  - Order Dockerfile instructions to maximise build-cache hits
+  - Use a multi-stage build to ship only what runs
+  - Explain why containers are processes and what isolation they do and do not give
+concepts: [image, layer, container, Dockerfile, build cache, multi-stage build, registry, namespace, cgroup, base image]
+reading:
+  - title: "Docker docs: Build cache"
+    url: "https://docs.docker.com/build/cache/"
+  - title: "Docker docs: Multi-stage builds"
+    url: "https://docs.docker.com/build/building/multi-stage/"
+misconceptions:
+  - belief: "A container is a small virtual machine."
+    correction: "A container is a normal process on the host kernel, restricted by namespaces (what it can see) and cgroups (what it can use). There is no separate kernel, which is why containers start in milliseconds and also why they isolate less strongly than VMs."
+  - belief: "Each Dockerfile instruction adds a copy of the whole filesystem."
+    correction: "Layers store only the changes an instruction made and are shared between images. The problem is the opposite: a changed layer invalidates every layer after it, so instruction order decides how much is rebuilt."
+---
+
+## Why it exists
+
+"It works on my machine" comes from differences in operating system packages, runtime versions and files. An **image** packages the application with everything it needs except the kernel, so the same artifact runs on a laptop, in CI and in production.
+
+<Callout kind="why">
+An image is an immutable, versioned artifact. Deploying becomes "run image X" rather than "install things on a server and hope".
+</Callout>
+
+## How it works
+
+### Image, layers, container
+
+A **Dockerfile** is a recipe. Each instruction (`FROM`, `COPY`, `RUN`) produces a **layer**: a set of filesystem changes identified by a content hash. An **image** is a stack of layers plus metadata (the default command, environment). A **container** is a running process created from an image, with a thin writable layer on top that disappears when the container is removed. Images live in a **registry** and are referred to by name and tag, ideally pinned by digest.
+
+### Containers are processes
+
+The kernel features that make this work: **namespaces** give the process its own view of process ids, network, mounts and hostname; **cgroups** limit CPU and memory. That is all. The process is visible from the host and can be killed from it, it shares the host kernel, and the isolation is weaker than a VM's. Consequences: don't run as root (0.4), and treat the container boundary as one layer of defence, not a vault.
+
+### Layer order and the cache
+
+Docker reuses a cached layer if the instruction and its inputs are unchanged, and once one layer changes **all later layers are rebuilt**. So put what changes rarely first. This project's API Dockerfile (`apps/api/Dockerfile`) does it deliberately:
+
+```dockerfile file=api.Dockerfile mark=3,4,5,6
+# manifests first: cached until a dependency changes
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/api/package.json apps/api/
+RUN pnpm install --frozen-lockfile --filter @nexora/api...
+# source last: changes on every commit
+COPY apps/api apps/api
+RUN pnpm --filter @nexora/api build
+```
+
+If you change only source code, the install layer is reused and only the build re-runs. If you copied the whole repo before installing, every code edit would reinstall all dependencies. Use `.dockerignore` to keep `node_modules`, `.git` and secrets out of the build context.
+
+### Multi-stage builds
+
+Build tools (compilers, dev dependencies) are not needed to run the app. A **multi-stage build** compiles in one stage and copies only the result into a small runtime stage:
+
+```dockerfile file=stages.Dockerfile mark=1,2
+FROM node:22-slim AS build        # has compilers, dev dependencies
+FROM node:22-slim AS runtime      # starts clean
+COPY --from=build /out /app       # only the production output crosses over
+USER node                         # not root
+CMD ["node", "dist/server.js"]    # PID 1 is node: it receives SIGTERM directly
+```
+
+The final image is smaller, starts faster, and has a smaller attack surface. The `CMD` in exec form means no shell wrapper, so the graceful-shutdown handler from the earlier chapter actually receives the signal.
+
+**Verification status:** the sandbox this site was developed in has the Docker client but no running daemon, so the project's images were *not built here*. The Dockerfile reasoning above follows Docker's documentation; the first real build is the CI `docker` job. Check it yourself with `docker build` and `docker history`.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Putting secrets in the image (a `COPY .env`, an `ARG` token). Layers are inspectable and registries are shared. Inject secrets at run time.
+</Callout>
+
+- **`COPY . .` before dependency install**, defeating the cache.
+- **The `latest` tag**, so builds are not reproducible.
+- **Running as root** and shipping compilers and shells you do not need.
+- **Storing data in the container filesystem**, which vanishes with the container; use volumes or external stores.
+- **One giant image for several services.**
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Containers give reproducible artifacts and dense hosting, and add a build pipeline, a registry and another layer to debug. Slim base images are small and lack debugging tools; full images are convenient and larger. Choose per service and keep a debug image or ephemeral debug container for incidents.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Pin base images by version or digest, scan images for known vulnerabilities in CI, set CPU and memory limits (a container over its memory limit is killed with exit code 137), add a HEALTHCHECK or readiness probe, tag images with the git commit, and keep images immutable: change by rebuilding, never by editing a running container.
+</Callout>
+
+## Check yourself
+
+<Exercise id="dk-process" kind="quiz" prompt="What is a container, technically?" options={["A lightweight virtual machine with its own kernel", "A process on the host kernel restricted by namespaces and cgroups", "A compressed zip file", "A network protocol"]} answer={1} explain="There is no separate kernel. Namespaces limit what the process sees, and cgroups limit what it can use." />
+
+<Exercise id="dk-cache" kind="predict" prompt="You edit one source file. The Dockerfile copies package manifests, runs install, then copies the source. Which steps rebuild?" options={["All steps including install", "Only the steps from the source COPY onward", "None", "Only the base image"]} answer={1} explain="The install layer's inputs did not change, so it is cached. Only the source copy and later steps rebuild." />
+
+<Exercise id="dk-order" kind="debug" prompt="Every commit triggers a 4-minute dependency install in CI image builds. The Dockerfile starts with COPY . . then RUN npm ci. What is the fix?" options={["Use a bigger CI machine", "Copy only the package manifests first, run the install, then copy the source", "Remove the lockfile", "Use the latest tag"]} answer={1} explain="Copying all files first invalidates the install layer on any change. Copy manifests, install, then copy the source." />
+
+<Exercise id="dk-secret" kind="scenario" prompt="A build passes an API token with ARG and uses it in a RUN step. Why is that risky?" options={["It is fine", "The value can remain in image history and layers that others can pull and inspect", "ARG is slow", "RUN cannot read ARG"]} answer={1} explain="Build arguments and layer contents are recoverable from the image. Use run-time secrets or build secrets that are not stored in layers." />

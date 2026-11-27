@@ -1,0 +1,131 @@
+---
+chapter: A4
+slug: tokens-and-authorization
+title: "JWTs, trade-offs and authorization"
+order: 2
+summary: "A signed token proves identity without a lookup, at the cost of easy revocation. Then comes the check that matters most: may this user do this to that object?"
+objectives:
+  - Describe what a JWT contains and what its signature guarantees
+  - Explain why a signed token is not secret and is hard to revoke
+  - Compare sessions and JWTs honestly
+  - Apply role and ownership checks on the server for every protected action
+concepts: [JWT, signature, claims, expiry, refresh token, revocation, RBAC, ownership check, IDOR]
+reading:
+  - title: "RFC 7519: JSON Web Token"
+    url: "https://www.rfc-editor.org/rfc/rfc7519"
+  - title: "OWASP: Authorization Cheat Sheet"
+    url: "https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html"
+misconceptions:
+  - belief: "A JWT is encrypted, so I can put private data in it."
+    correction: "A standard JWT is signed, not encrypted. Anyone holding it can base64-decode the contents. The signature only proves nobody changed them."
+  - belief: "If the user is logged in, the request is allowed."
+    correction: "Login only establishes identity. Every action still needs its own check that this user may touch this specific object."
+---
+
+## Why it exists
+
+Sessions need a lookup in a shared store on every request. A **JSON Web Token** carries the identity inside itself, signed by the server, so any server copy can verify it with a key and no store. That is attractive for many servers, or for several services that should all accept the same login.
+
+<Callout kind="why">
+The token moves the state from the server to the client and replaces a lookup with a signature check.
+</Callout>
+
+## How it works
+
+### The three parts
+
+A JWT is three base64url pieces joined by dots: **header** (algorithm), **payload** (claims such as user id and expiry), and **signature**. The signature is computed over the first two with a secret (or a private key). On each request the server recomputes it. If the payload were altered, the signature would not match.
+
+```js file=jwt-sketch.mjs mark=4,5,9
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+const sign = (data, secret) =>
+  createHmac("sha256", secret).update(data).digest("base64url");
+
+export function issue(claims, secret) {
+  const body = `${b64({ alg: "HS256", typ: "JWT" })}.${b64(claims)}`;
+  return `${body}.${sign(body, secret)}`;
+}
+
+export function verify(token, secret) {
+  const [h, p, s] = token.split(".");
+  const expected = Buffer.from(sign(`${h}.${p}`, secret));
+  const given = Buffer.from(s ?? "");
+  if (expected.length !== given.length || !timingSafeEqual(expected, given)) return null;
+  const claims = JSON.parse(Buffer.from(p, "base64url").toString());
+  return claims.exp > Date.now() / 1000 ? claims : null;
+}
+```
+
+<Callout kind="note">
+This is a teaching sketch. In real code, use a maintained JWT library, pin the accepted algorithm yourself, and never accept the algorithm named in an incoming token header blindly. Accepting "none" or a swapped algorithm has caused real breaches.
+</Callout>
+
+### What it does not do
+
+The payload is readable by anyone. Do not put secrets in it. And because no server record exists, you cannot simply delete a token: it stays valid until it expires. The usual compromise is a **short-lived access token** (minutes) plus a **refresh token** stored server-side that can be revoked and exchanged for new access tokens.
+
+### Sessions versus JWTs
+
+<Seq participants={["Client", "Server A", "Server B"]} messages={[
+  {"from":0,"to":1,"label":"login: receive signed token"},
+  {"from":0,"to":2,"label":"request with token"},
+  {"from":2,"to":0,"label":"verified by signature alone, no shared store"}
+]} />
+
+JWTs shine when verification must happen in many places without a shared database. For one ordinary web app, a server-side session is simpler and easier to revoke. Choose with a reason, not a trend.
+
+### Authorization
+
+Once you know who is calling, check what they may do:
+
+- **Role-based**: admins may delete users, members may not.
+- **Ownership**: a user may read **their own** invoice.
+
+```js file=route.mjs mark=3,4,5
+app.get("/invoices/:id", requireLogin, async (req, res) => {
+  const invoice = await db.invoice.findById(req.params.id);
+  if (!invoice || invoice.ownerId !== req.user.id) {
+    return res.status(404).end(); // same answer for missing and forbidden
+  }
+  res.json(invoice);
+});
+```
+
+Skipping the ownership line is the classic **IDOR** (insecure direct object reference): any logged-in user changes the number in the URL and reads someone else's data. Returning 404 for both missing and forbidden avoids revealing which ids exist.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Checking only that a user is logged in, not that they own the object. This is among the most common serious API bugs, because the code works perfectly in testing with one user.
+</Callout>
+
+- **Long-lived JWTs with no revocation path.**
+- **Storing a token where scripts can read it** (such as localStorage) without weighing the cross-site scripting risk, versus an HttpOnly cookie.
+- **Trusting claims such as `role: admin` that the client could have forged**, when the signature is not actually verified.
+- **Doing authorization only in the UI**, by hiding buttons.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Sessions: easy revocation, a lookup per request, shared store required. JWTs: no lookup and easy to verify anywhere, but hard to revoke and larger on every request. Many systems use both: a short JWT at the edge, a revocable refresh session behind it.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Keep signing keys in a secrets manager and support key rotation. Keep access tokens short, log authorization failures, and write tests that log in as user A and try to read and change user B's objects. That one test finds more real bugs than most reviews.
+</Callout>
+
+## Check yourself
+
+<Exercise id="jwt-secret" kind="quiz" prompt="What does a standard JWT's signature guarantee?" options={["The payload is secret", "The payload was not modified since it was signed", "The user is still logged in", "The token cannot expire"]} answer={1} explain="A signature gives integrity and authenticity, not secrecy. Anyone can read the payload, and the token stays valid until its expiry." />
+
+<Exercise id="jwt-revoke" kind="scenario" prompt="You issue 24-hour JWTs. An employee leaves and you want access cut now. What is the problem, and a common mitigation?" options={["JWTs cannot be verified; use cookies", "No server record exists to delete; use short-lived access tokens with a revocable refresh token", "The signature must be re-signed daily; use bigger keys", "HTTP caches the token; clear the cache"]} answer={1} explain="Stateless tokens stay valid until expiry. Short access lifetimes plus a revocable refresh token limit the window." />
+
+<Exercise id="idor" kind="debug" prompt="GET /invoices/42 returns any invoice to any logged-in user who knows the id. What is missing?" options={["HTTPS", "An ownership check comparing the invoice owner with the authenticated user", "A longer id", "A CORS header"]} answer={1} explain="Authentication was done, authorization was not. The handler must verify that this user may access this invoice." />
+
+<Exercise id="when-jwt" kind="quiz" prompt="For a single traditional web app with one database and a need to log users out instantly, which choice is usually simplest?" options={["JWTs with 30-day expiry", "Server-side sessions", "No authentication", "Basic auth in the URL"]} answer={1} explain="With a single app and a store available, sessions give instant revocation without extra mechanisms." />
+
+<Exercise id="alg-none" kind="predict" prompt="A server reads the algorithm from the incoming token header and a forged token says alg is none with no signature. If the server accepts it, what happens?" options={["Rejected, since the signature is missing", "The forged claims are trusted, so anyone can impersonate any user", "Only reads are allowed", "The token expires immediately"]} answer={1} explain="Letting the attacker choose the verification method lets them choose no verification. Always fix the accepted algorithm in server configuration." />

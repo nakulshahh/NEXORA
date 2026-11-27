@@ -1,0 +1,106 @@
+---
+chapter: B7
+slug: retries-backoff-idempotency
+title: "Retries, backoff and idempotent jobs"
+order: 2
+summary: "Failures are normal, so jobs are retried. Retrying carelessly overloads a struggling dependency, and retrying a non-idempotent job duplicates its effect. Backoff, jitter, limits and idempotency keys make retries safe."
+objectives:
+  - Compute an exponential backoff schedule and explain why jitter is added
+  - Explain how synchronized retries make an outage worse
+  - Make a job idempotent with a stored key or a natural uniqueness rule
+  - Decide when a job should go to a dead-letter state
+concepts: [retry, exponential backoff, jitter, retry storm, idempotency key, dead-letter queue, poison message, circuit breaker]
+reading:
+  - title: "AWS Architecture Blog: Exponential Backoff and Jitter"
+    url: "https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/"
+  - title: "Stripe docs: Idempotent requests"
+    url: "https://docs.stripe.com/api/idempotent_requests"
+misconceptions:
+  - belief: "If a call fails, retrying immediately and repeatedly is the safest way to get it through."
+    correction: "A dependency that is overloaded gets more overloaded by instant retries from every client. Wait exponentially longer between attempts, add jitter, and cap the number of attempts."
+  - belief: "Retrying is only a problem for payments."
+    correction: "Any side effect (an email, a counter increment, an inserted row) repeats when a job is retried. Idempotency is a property you design into every retried operation."
+---
+
+## Why it exists
+
+Networks drop packets, services restart, and databases time out. A job that fails once will often succeed a moment later, so retrying is right. But retries are also a classic way to turn a small problem into an outage, and a way to charge a customer twice.
+
+<Callout kind="why">
+Retries multiply load exactly when a system is weakest. They must be bounded, spread out in time and safe to repeat.
+</Callout>
+
+## How it works
+
+### Exponential backoff
+
+Wait longer after each failure. With a base of 100 ms and a factor of 2 the waits are:
+
+```text file=backoff.txt
+attempt 1: 100 ms   attempt 2: 200   attempt 3: 400   attempt 4: 800   attempt 5: 1600   attempt 6: 3200
+```
+
+Cap the delay (for example at 30 seconds) and the number of attempts.
+
+### Jitter
+
+If a thousand workers fail together and all wait exactly 200 ms, they all retry together, producing a **retry storm**: synchronized waves that hit the recovering service at the same instant. **Jitter** randomises each wait (a common choice is a uniform random delay between zero and the computed backoff), spreading the retries over time.
+
+### Idempotency
+
+An operation is **idempotent** if doing it twice has the same effect as once. Setting a value is; adding to a counter is not. Techniques:
+
+- **Natural idempotency**: `UPDATE orders SET status = 'shipped' WHERE id = 7` is safe to repeat.
+- **Uniqueness constraint**: record each processed event id in a table with a unique key; the second insert fails and you skip the work.
+- **Idempotency key**: the client sends a unique key with the request; the server stores the key and the response and returns the stored response if the key repeats. (The REST chapter measured this pattern.)
+
+```sql file=dedupe.sql mark=2,4
+CREATE TABLE processed (event_id text PRIMARY KEY);
+-- inside the job's transaction:
+INSERT INTO processed(event_id) VALUES ($1) ON CONFLICT DO NOTHING;
+-- if zero rows were inserted, this event was already handled: skip the side effect
+```
+
+Put the dedupe insert and the database effects in the *same transaction* so they commit together. For effects outside your database (email, third-party API), pass the key to the provider if it supports one, or accept at-least-once and make the effect harmless.
+
+### Poison jobs and dead letters
+
+Some jobs never succeed (bad payload, a bug). After a maximum number of attempts, move the job to a **dead-letter** state, keep its error, alert someone, and let operators replay it after a fix. Without this, one bad job can block or churn the queue forever.
+
+### Know when to stop retrying
+
+Retry transient errors (timeouts, 503) but not permanent ones (400, validation failure). When a dependency is clearly down, a **circuit breaker** stops calling it for a while and fails fast, so you do not waste capacity.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Retrying at every layer: the client retries three times, the gateway three times and the worker three times, which multiplies into 27 calls for one failure. Retry at one chosen layer.
+</Callout>
+
+- **No jitter**, so retries stay synchronized.
+- **Retrying non-idempotent actions** without a key.
+- **Retrying permanent errors** forever.
+- **Infinite attempts** and no dead-letter path.
+- **Ignoring the timeout** of the retried call, so retries pile up while earlier attempts are still running.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Longer backoff protects the dependency but delays recovery for users. More attempts raise the success rate but also load and latency. Idempotency storage adds writes and a table to clean up; skipping it risks duplicate side effects.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Log each attempt with the job id and attempt number, track retry rate and dead-letter size as health signals, set per-dependency limits so one failing service cannot drain all workers, and test a dependency outage on purpose.
+</Callout>
+
+## Check yourself
+
+<Exercise id="retry-backoff" kind="predict" prompt="Base delay 100 ms, factor 2, no cap. How long is the wait before the 5th retry?" options={["500 ms", "800 ms", "1600 ms", "3200 ms"]} answer={2} explain="The waits double: 100, 200, 400, 800, 1600. The fifth wait is 1600 ms." />
+
+<Exercise id="retry-jitter" kind="quiz" prompt="Why add jitter to backoff?" options={["To make waits longer", "So clients do not all retry at the same instant", "To avoid timeouts", "To encrypt retries"]} answer={1} explain="Without jitter, clients that failed together retry together. Randomising spreads the load." />
+
+<Exercise id="retry-idem" kind="scenario" prompt="A job adds 10 to a user's points. It is retried after a crash. How do you prevent double-crediting?" options={["Hope it doesn't happen", "Record the event id in a unique table in the same transaction and skip if it already exists", "Increase the timeout", "Retry faster"]} answer={1} explain="A unique processed-event record turns the repeated delivery into a no-op, and committing it with the credit keeps both atomic." />
+
+<Exercise id="retry-layers" kind="debug" prompt="A brief database blip causes a huge spike of 27 requests per original call. Client, gateway and worker each retry 3 times. What is the fix?" options={["Retry more", "Choose one layer to retry and have the others fail fast", "Remove timeouts", "Add a cache"]} answer={1} explain="Retries at every layer multiply (3 x 3 x 3). Retry at one place with backoff, jitter and a cap." />

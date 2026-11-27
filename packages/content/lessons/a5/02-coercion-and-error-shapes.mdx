@@ -1,0 +1,119 @@
+---
+chapter: A5
+slug: coercion-and-error-shapes
+title: "Coercion, defaults and error responses"
+order: 2
+summary: "Query strings are always text and JSON is loosely typed. Convert deliberately, apply defaults in one place, and answer bad input with a clear, consistent 400."
+objectives:
+  - Explain why query-string values arrive as strings and convert them explicitly
+  - Predict the surprising results of Number, parseInt and unary plus on odd inputs
+  - Handle repeated parameters and unknown fields on purpose
+  - Design an error response that clients can act on without leaking internals
+concepts: [coercion, query string, default value, "400 Bad Request", "422", error shape, unknown fields]
+reading:
+  - title: "MDN: Number() conversion"
+    url: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number"
+  - title: "RFC 9457: Problem Details for HTTP APIs"
+    url: "https://www.rfc-editor.org/rfc/rfc9457"
+misconceptions:
+  - belief: "?limit=10 gives my code the number 10."
+    correction: "A URL carries only text. The framework hands you the string '10', and a repeated key such as ?limit=10&limit=20 can even arrive as an array. You must convert and check explicitly."
+  - belief: "Number(x) returns NaN for anything that is not a number."
+    correction: "Number('') and Number(null) are 0, and Number('0x10') is 16. Conversion functions are forgiving in ways that let bad input through unless you check the original string first."
+---
+
+## Why it exists
+
+Validation (the previous lesson) decides what is acceptable. This lesson covers the awkward middle step: turning loosely typed input into the exact types your code wants, and telling the caller clearly when that fails.
+
+JSON preserves numbers, booleans and null. A query string preserves nothing: `/items?limit=10&active=true` delivers the text `"10"` and the text `"true"`. Path parameters, headers and form bodies are text too.
+
+<Callout kind="why">
+Convert once, in the same place you validate, so the rest of the code receives real numbers and booleans and never has to wonder.
+</Callout>
+
+## How it works
+
+### JavaScript's conversions are forgiving
+
+```js file=coercion.mjs mark=1,2
+console.log(Number(""), Number("  "), Number(null), Number(undefined));
+console.log(Number("12abc"), parseInt("12abc"), Number("0x10"), Number("1e3"));
+```
+
+This prints `0 0 0 NaN` and then `NaN 12 16 1000`. An empty string becomes `0`, `parseInt` stops at the first bad character and returns `12` for `"12abc"`, and hexadecimal and exponent forms are accepted. If `?limit=` (empty) quietly becomes `0`, your pagination silently misbehaves. Check the string with a pattern first, then convert:
+
+```js file=parse-limit.mjs mark=2,3
+function parseLimit(raw, { def = 20, max = 100 } = {}) {
+  if (raw === undefined) return { ok: true, value: def };
+  if (typeof raw !== "string" || !/^\d{1,4}$/.test(raw)) return { ok: false, error: "limit must be a whole number" };
+  const n = Number(raw);
+  if (n < 1 || n > max) return { ok: false, error: `limit must be between 1 and ${max}` };
+  return { ok: true, value: n };
+}
+```
+
+Defaults are applied here, in one place, instead of being scattered as `limit || 20` across handlers. (`||` is a classic bug source: it also replaces a legitimate `0`.)
+
+### Repeated and unknown keys
+
+The same key can appear twice. With the standard URL API, `get` returns the first value and `getAll` returns every value:
+
+```js file=repeated.mjs mark=2,3
+const q = new URL("http://h/items?limit=10&limit=20").searchParams;
+console.log(q.get("limit"), q.getAll("limit")); // 10 [ '10', '20' ]
+```
+
+Frameworks differ in what they hand you (a string, the last value, or an array), so a validator should say which it accepts and reject the rest.
+
+For **unknown fields** in a JSON body choose a policy deliberately: *strip* them (lenient, common for public APIs), or *reject* them (strict, catches typos such as `emial`). Either is fine; accidentally passing them through is not.
+
+### Duplicate keys in JSON
+
+JSON text such as `{"a":1,"a":2}` parses to `{ a: 2 }` in JavaScript: the last one wins. Other languages may keep the first. If two components disagree about which wins, an attacker can show one value to a checker and another to the code that acts on it. Parse once and pass the parsed object around, never the raw text.
+
+### Error responses
+
+Return **400 Bad Request** for malformed or invalid input (some teams use **422 Unprocessable Content** for "well-formed but semantically invalid"; pick one and be consistent). Include enough for a client to fix the request, and nothing about your internals:
+
+```json file=error.json mark=2,3
+{
+  "error": { "code": "validation_failed", "message": "Invalid request" },
+  "fields": { "limit": "limit must be between 1 and 100" }
+}
+```
+
+A stable machine-readable `code`, a human message, and per-field details. RFC 9457 standardises a similar "problem details" shape if you want an existing convention.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Using `parseInt` or `Number` straight on user input and trusting the result. `parseInt("12abc")` is 12 and `Number("")` is 0: the bad input became a plausible value.
+</Callout>
+
+- **Using `||` for defaults**, which also overrides `0` and the empty string.
+- **Leaking internals** in errors: stack traces, SQL fragments or file paths.
+- **Different error shapes per endpoint**, which forces every client to special-case each route.
+- **Returning 200 with an error in the body**, which breaks caches, monitoring and generic clients.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Strict conversion ("must be digits only") gives precise errors but rejects `limit=10.0` or `limit=+10`. Lenient conversion accepts more but multiplies the ways one value can be written, which makes caching, logging and security rules harder. Public APIs lean strict and document the exact format.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Put coercion and defaults in the schema so they are declared, tested and documented in one place. Cap array lengths, string lengths and pagination sizes. Count validation failures per route and per client in your metrics.
+</Callout>
+
+## Check yourself
+
+<Exercise id="coerce-predict-empty" kind="predict" prompt="What does Number('') evaluate to in JavaScript?" options={["NaN", "0", "undefined", "It throws"]} answer={1} explain="An empty or whitespace-only string converts to 0, which is why ?limit= can silently become a limit of zero if you convert without checking the text first." />
+
+<Exercise id="coerce-predict-parseint" kind="predict" prompt="What does parseInt('12abc') return?" options={["NaN", "12", "0", "'12abc'"]} answer={1} explain="parseInt reads digits from the start and stops at the first character that does not fit, so it returns 12. Number('12abc') would be NaN. The two behave differently." />
+
+<Exercise id="coerce-default-or" kind="debug" prompt="A handler uses const limit = Number(req.query.limit) || 20. A client sends ?limit=0 to ask for no items. What happens?" options={["limit is 0", "limit is 20, because 0 is falsy and || replaces it", "limit is NaN", "The server returns 400"]} answer={1} explain="|| treats 0 as 'missing'. Decide explicitly whether 0 is valid, and apply defaults only when the value is actually undefined." />
+
+<Exercise id="coerce-error-status" kind="scenario" prompt="A client sends a JSON body with an invalid field. Which response best helps them and keeps monitoring useful?" options={["200 OK with { success: false }", "500 Internal Server Error with a stack trace", "400 with a stable error code and per-field messages", "204 No Content"]} answer={2} explain="A 4xx status tells caches, proxies and monitoring that the client was wrong, and per-field details let the client fix the request without exposing server internals." />

@@ -1,0 +1,132 @@
+---
+chapter: A1
+slug: http-messages
+title: HTTP as text on a socket
+order: 1
+summary: An HTTP message is just structured text carried over TCP. Read one by hand, parse one by hand, then see what the framework does for you.
+objectives:
+  - Identify the parts of an HTTP request and response message
+  - Explain why HTTP is called stateless and what that implies for design
+  - Parse a raw request from a TCP socket without a framework
+  - Describe how the body length is communicated
+concepts: [HTTP/1.1, request line, headers, body, Content-Length, statelessness, Host header]
+watch:
+  - title: "Understanding HTTP for backend engineers, where it all starts"
+    url: "https://www.youtube.com/watch?v=a3C1DMswClQ"
+    channel: Sriniously
+reading:
+  - title: "RFC 9110 — HTTP Semantics"
+    url: "https://www.rfc-editor.org/rfc/rfc9110"
+misconceptions:
+  - belief: "HTTP is a special protocol that browsers and servers speak through some framework magic."
+    correction: "HTTP/1.1 is plain text over a TCP connection. You can speak it with a raw socket, and every framework is a parser plus conventions."
+  - belief: "HTTP remembers who I am between requests."
+    correction: "HTTP is stateless: each request stands alone. Continuity comes from things the client sends again, such as cookies or tokens."
+---
+
+## Why it exists
+
+Clients and servers written by different people, in different languages, years apart, need to agree on how to ask for something and how to answer. **HTTP** is that agreement: a small set of rules for a request and a response, simple enough to implement in an afternoon and general enough to carry web pages, JSON APIs and file downloads.
+
+<Callout kind="why">
+Keeping the protocol text-based and stateless made it easy to debug, cache and scale. Any server can answer any request, so you can put many servers behind one address.
+</Callout>
+
+## How it works
+
+### The shape of a message
+
+Here is a complete request, exactly as it travels over the wire. Lines end with `\r\n`, and a blank line ends the headers.
+
+```http file=request.txt mark=1,2
+GET /users/42 HTTP/1.1
+Host: api.example.com
+Accept: application/json
+User-Agent: demo/1.0
+
+```
+
+- The **request line**: method, target, version.
+- **Headers**: `Name: value` metadata. `Host` is required in HTTP/1.1 because one IP can serve many sites.
+- An empty line.
+- An optional **body**, whose length is declared by a header.
+
+The response mirrors it:
+
+```http file=response.txt mark=1
+HTTP/1.1 200 OK
+Content-Type: application/json
+Content-Length: 27
+
+{"id":42,"name":"Ada Lovelace"}
+```
+
+The **status line** replaces the request line. Then headers, a blank line, and the body.
+
+<Sim id="http" />
+
+### How does the reader know where the body ends?
+
+TCP is a byte stream, so HTTP must say. Either `Content-Length: N` gives the exact byte count, or `Transfer-Encoding: chunked` sends the body in length-prefixed pieces, ending with a zero-length chunk. No framework can guess this; it is part of the protocol.
+
+### Speaking HTTP with a raw socket
+
+```js file=raw-http.mjs mark=5,6,7
+import net from "node:net";
+
+net.createServer((socket) => {
+  let buf = "";
+  socket.on("data", (c) => {
+    buf += c;
+    const end = buf.indexOf("\r\n\r\n");
+    if (end === -1) return; // headers not complete yet
+    const [requestLine, ...headerLines] = buf.slice(0, end).split("\r\n");
+    const [method, target] = requestLine.split(" ");
+    const host = headerLines.find((h) => h.toLowerCase().startsWith("host:"));
+    const body = JSON.stringify({ method, target, host });
+    socket.end(
+      `HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
+    );
+  });
+}).listen(8080);
+```
+
+Run it and `curl -i localhost:8080/hello`. The same server in Node's `http` module is five lines, but it does exactly this parsing for you, plus all the edge cases this toy ignores (partial buffers, request bodies, pipelining, malformed input).
+
+### Statelessness
+
+The server keeps nothing about you between requests. If request two depends on request one, the client must say so: a cookie, an `Authorization` header, an id in the URL. This is why any replica can serve any request.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Wrong `Content-Length`. Too small and the client truncates your response. Too large and it hangs waiting for bytes that never come. Count **bytes**, not characters: `"é"` is one character and two bytes in UTF-8.
+</Callout>
+
+- **Forgetting the blank line** between headers and body.
+- **Trusting the client's headers.** `Host`, `X-Forwarded-For` and `Content-Length` are claims, not facts.
+- **Putting secrets in the URL.** URLs end up in logs, history and referrer headers.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Text headers are easy to read and extend but verbose and repeated on every request. HTTP/2 compresses headers and multiplexes many requests over one connection, which removes HTTP-level head-of-line blocking but not TCP's. HTTP/3 moves to QUIC to remove that too. The semantics you learn here stay the same across all three.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+You almost never see raw bytes in production, but you will meet their consequences: proxies that enforce header size limits, load balancers that close idle keep-alive connections, and request-smuggling bugs where two parsers disagree about where a message ends.
+</Callout>
+
+When a client and a proxy disagree about the body length, an attacker can hide a second request inside the first. This is why strict, boring parsing matters.
+
+## Check yourself
+
+<Exercise id="http-parts" kind="quiz" prompt="Which line correctly ends the header section of an HTTP/1.1 message?" options={["A line containing only a semicolon", "A blank line (CRLF CRLF after the last header)", "The Content-Length header", "A closing brace"]} answer={1} explain="A completely empty line separates headers from the body. Everything after it is body." />
+
+<Exercise id="content-length-bytes" kind="predict" prompt="A server sends the body 'héllo' encoded as UTF-8 and sets Content-Length: 5. What does a client observe?" options={["The full body, correctly", "A truncated body, because the UTF-8 byte length is 6", "An error before any data", "The body padded with a null byte"]} answer={1} explain="Content-Length counts bytes. 'é' takes two bytes in UTF-8, so the body is 6 bytes, and the client stops reading after 5." />
+
+<Exercise id="stateless-scale" kind="scenario" prompt="You run three identical API servers behind a load balancer and a user's second request lands on a different server than the first. Which design makes this work without special routing?" options={["Store the user's session in server memory", "Each request carries what is needed to identify the user (token or session id looked up in shared storage)", "Pin each user to one server forever", "Disable the load balancer"]} answer={1} explain="Stateless requests can be served by any replica. Continuity must come from data the client resends, backed by shared state if needed." />
+
+<Exercise id="chunk-debug" kind="debug" prompt="Your raw parser only handles requests that arrive in a single data event, and a large POST sometimes fails. What is the bug?" options={["POST is unsupported by TCP", "The request can arrive in several chunks, so the parser must buffer until headers and the declared body length are complete", "The Host header is missing", "Node closes sockets on large payloads"]} answer={1} explain="TCP delivers a byte stream. You must accumulate bytes, find the end of headers, then read exactly Content-Length body bytes." />

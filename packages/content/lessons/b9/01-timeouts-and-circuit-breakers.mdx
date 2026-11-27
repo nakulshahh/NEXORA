@@ -1,0 +1,109 @@
+---
+chapter: B9
+slug: timeouts-and-circuit-breakers
+title: "Timeouts, circuit breakers and failing fast"
+order: 1
+summary: "A slow dependency is more dangerous than a dead one because callers wait on it. Timeouts bound the wait, circuit breakers stop calling a failing service, and fast failure keeps one problem from spreading."
+objectives:
+  - Explain why a missing timeout turns a slow dependency into an outage
+  - Set timeouts as a budget across a chain of calls
+  - Describe the closed, open and half-open states of a circuit breaker
+  - Use fallbacks and load shedding deliberately
+concepts: [timeout, deadline, circuit breaker, half-open, fail fast, fallback, bulkhead, load shedding, cascading failure]
+reading:
+  - title: "Martin Fowler: CircuitBreaker"
+    url: "https://martinfowler.com/bliki/CircuitBreaker.html"
+  - title: "MDN: AbortSignal.timeout()"
+    url: "https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal/timeout_static"
+misconceptions:
+  - belief: "If a dependency is down my requests will fail quickly."
+    correction: "A dead service that refuses connections fails fast, but a hung or slow one holds your connections and threads until a timeout. Without a timeout each request waits, queues build up, and your own service falls over."
+  - belief: "A circuit breaker is just a retry limit."
+    correction: "Retries bound attempts per request. A breaker looks at recent failures across all requests and stops calling the dependency for a while, which protects both the dependency and your capacity."
+---
+
+## Why it exists
+
+Modern services call others: a database, a payment API, a recommendation service. The dangerous failure is not "down", it is "slow". Every request waits on the slow call; each waiting request holds a connection, memory and a worker; soon your service cannot answer anyone, and the failure spreads to its callers. This is a **cascading failure**.
+
+<Callout kind="why">
+Reliability patterns are about containing damage: bound how long you wait, stop calling what is failing, and keep working in a degraded way when you can.
+</Callout>
+
+## How it works
+
+### Timeouts
+
+A call with no timeout waits as long as the other side does. On a local test server that took two seconds to answer:
+
+```text file=timeout.txt
+with AbortSignal.timeout(300): fired after 303 ms (TimeoutError)
+with no timeout:               waited 2010 ms
+```
+
+```ts file=timeout.ts mark=2
+const res = await fetch(url, {
+  signal: AbortSignal.timeout(300),   // give up after 300 ms
+});
+```
+
+Set a timeout on every outbound call: HTTP, database, cache and queue. Think of it as a **budget**: if your endpoint promises a response within 1 second and calls two services, their timeouts plus your own work must fit inside that second. Pass a **deadline** down the call chain so downstream services do not keep working after the caller has given up. Pick timeouts from observed latency (a bit above the 99th percentile), not guesses.
+
+### Circuit breakers
+
+A breaker wraps calls to a dependency and has three states:
+
+- **Closed**: calls pass through; failures are counted.
+- **Open**: after too many failures, calls are rejected immediately without contacting the dependency.
+- **Half-open**: after a cool-down, a few trial calls go through; success closes the circuit, failure reopens it.
+
+In a toy run, the dependency was down for 200 requests arriving at 100 per second, with a breaker opening after 5 consecutive failures and a 1-second cool-down:
+
+```text file=breaker.txt
+reached the dependency 6 times, fast-failed 194 requests
+```
+
+Instead of 200 slow, failing calls, the dependency saw 6 and the rest got an instant error the caller can handle. This is a model (single process, no concurrency), but it shows the effect: you spare the struggling service and your own threads.
+
+### What to do when failing
+
+- **Fallback**: return a cached or default value (a product list without recommendations). Mark degraded responses so clients know.
+- **Fail clearly**: a fast 503 with `Retry-After` beats a hung request.
+- **Bulkheads**: separate pools per dependency so one slow service cannot use all your connections, like watertight compartments.
+- **Load shedding**: when overloaded, reject some requests early (lowest priority first) to keep the rest healthy.
+
+Together with backoff and idempotent retries (B7), these form the toolkit: **timeout, retry with backoff, circuit breaker, fallback**.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Using the library default timeout, which is often "none" or minutes. Check the default of every HTTP, database and queue client you use.
+</Callout>
+
+- **Timeouts longer than the caller's own timeout**, so work continues for a caller that already left.
+- **Retrying inside a tripped breaker** and defeating it.
+- **One shared connection pool** for fast and slow dependencies.
+- **A fallback that itself calls the failing service.**
+- **No metrics on breaker state**, so nobody knows features are degraded.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Short timeouts fail fast and may kill requests that would have succeeded; long ones waste capacity. Breakers protect systems and can stay open too long or open on a brief blip. Fallbacks keep the site up while hiding that something is wrong.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Export timeout counts, breaker state and fallback usage as metrics with alerts; test dependency failure and slowness (not only down) in staging; and review defaults of every client library when you add one.
+</Callout>
+
+## Check yourself
+
+<Exercise id="ft-slow" kind="quiz" prompt="Why is a slow dependency often worse than a dead one?" options={["Slow services cost more", "Callers wait on it, holding resources until their own service is exhausted", "Dead services cannot be fixed", "Slow services never recover"]} answer={1} explain="A refused connection fails immediately, while a hang holds your threads and connections until something gives." />
+
+<Exercise id="ft-breaker" kind="predict" prompt="A circuit breaker is open. A request arrives. What happens?" options={["It is sent to the dependency", "It is rejected immediately without calling the dependency", "It waits for the dependency", "The breaker closes"]} answer={1} explain="Open means fail fast. After the cool-down a few trial calls test whether the dependency recovered." />
+
+<Exercise id="ft-budget" kind="scenario" prompt="Your endpoint must answer within 1 second and calls two services in sequence. What should their timeouts roughly add up to?" options={["5 seconds each", "Together comfortably less than 1 second, leaving room for your own work", "No timeouts", "Exactly 1 second each"]} answer={1} explain="Timeouts are a budget. The total of the chain must fit within what you promised your own caller." />
+
+<Exercise id="ft-default" kind="debug" prompt="During a partner outage your service runs out of threads and stops answering health checks. The HTTP client has default settings. What is the likely problem?" options={["Too many health checks", "No outbound timeout, so requests hang and accumulate", "The partner was too fast", "TLS failure"]} answer={1} explain="Default clients often wait indefinitely. Always set explicit timeouts on outbound calls." />

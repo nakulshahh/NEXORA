@@ -1,0 +1,107 @@
+---
+chapter: D4
+slug: testing-http-and-database-code
+title: "Testing HTTP APIs, databases and failure paths"
+order: 2
+summary: "Test an API by calling it as a client would, against a real database reset between tests, and test the failures too: validation errors, unauthorised access, duplicates and timeouts. Determinism and isolation keep it fast and trustworthy."
+objectives:
+  - Structure an API integration test with setup, request, assertion and cleanup
+  - Isolate tests with a real test database, transactions or truncation
+  - Test authorisation, validation and idempotency explicitly
+  - Test code that depends on time, randomness and external services using fakes
+concepts: [integration test, supertest, test database, fixture, isolation, fake clock, contract test, security test, idempotency test]
+reading:
+  - title: "Vitest: Mocking and fake timers"
+    url: "https://vitest.dev/guide/mocking.html"
+  - title: "Testcontainers: Why use real dependencies"
+    url: "https://testcontainers.com/guides/"
+misconceptions:
+  - belief: "If the happy-path request returns 200, the endpoint works."
+    correction: "Most production bugs are in the other paths: invalid input, missing auth, someone else's resource, duplicate submission, the dependency being down. These need their own tests."
+  - belief: "Tests can share one database state to save setup time."
+    correction: "Shared state makes tests order-dependent and flaky. Reset or isolate state per test so each can run alone and in any order."
+---
+
+## Why it exists
+
+An API's contract is its behaviour over HTTP: status codes, bodies, headers, and what it does to the database. The most valuable tests drive it the same way a client would and check both the response and the stored result.
+
+<Callout kind="why">
+Testing at the HTTP boundary exercises routing, validation, authentication, the handler, the query and serialisation together, which is where integration bugs live.
+</Callout>
+
+## How it works
+
+### Anatomy of an API test
+
+Arrange known state, act by sending a request, assert on the response and the database, and leave nothing behind.
+
+```ts file=orders.test.ts mark=2,3,5,6
+it("rejects a negative quantity with 422 and stores nothing", async () => {
+  const res = await request(app).post("/v1/orders").set(auth(userA))
+    .send({ productId: 1, quantity: -3 });
+  expect(res.status).toBe(422);
+  expect(res.body.error.code).toBe("validation_failed");
+  expect(await countOrders()).toBe(0);
+});
+```
+
+The assertion on stored state matters: a handler that returns an error after partially writing would pass a status-only test.
+
+### Isolation
+
+- **Truncate** tables between tests (simple, fast enough for small schemas).
+- **Wrap each test in a transaction** and roll it back (fast; does not work if the code under test opens its own transactions or connections).
+- **A fresh database per test file**, created from migrations (strongest; slower).
+
+Whichever you choose, run migrations in the test setup so the schema under test is the real one, and use the same Postgres major version as production. Seed only what each test needs, using small factory helpers rather than a giant shared fixture.
+
+### The paths people skip
+
+- **Authentication and authorisation**: no token gives 401; a valid user requesting another user's resource gives 403 or 404, never the data. Test this for every route that takes an id.
+- **Validation**: a table-driven test of bad inputs (missing field, wrong type, too long, extra field) against one schema, asserting the error shape.
+- **Idempotency and duplicates**: send the same request with the same key twice and assert one effect; submit a duplicate unique value and assert a clean conflict (409), not a 500.
+- **Concurrency**: fire several parallel requests at one resource and assert the invariant holds (the lost-update scenario from B4).
+- **Dependency failure**: make the external call time out and assert a defined response and no corrupted state.
+
+### Time, randomness and externals
+
+Inject a clock and use fake timers (`vi.useFakeTimers()`) so "expires in 15 minutes" tests run instantly and deterministically. Seed random generators. Replace third-party services with a **fake** that you control (return success, return a timeout) at the boundary of your code, keeping everything inside it real. A **contract test** checks that your fake still matches the real provider's behaviour, run occasionally against the real service.
+
+### Security and regression tests
+
+Add tests for the vulnerabilities you have closed: the injection string returns no rows, the forged cookie is rejected, the malformed header does not crash the server (this project has a regression test for a malformed `Referer` that once caused a 500). A fixed bug without a test comes back.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Asserting only the status code. Also check the body shape and the database effect, or a wrong-but-successful response passes.
+</Callout>
+
+- **Tests that depend on execution order or previous tests' data.**
+- **Real network calls to third parties** in the main suite.
+- **Time-based sleeps** instead of fake timers or condition waits.
+- **Testing the happy path only**, especially for authorisation.
+- **A test database that differs from production** (SQLite in tests, Postgres in production).
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Real databases make tests slower and more truthful; truncation is quick and transaction rollback quicker but less general. Fakes give control and can drift from the real service, so contract tests keep them honest.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Run integration tests in CI against the same database version you deploy, keep a post-deploy smoke test against the live URL, fail the build on any test that touches the public internet, and review failing-test history to find flaky or order-dependent tests.
+</Callout>
+
+## Check yourself
+
+<Exercise id="api-test-both" kind="quiz" prompt="Why should an API test for an invalid request also check the database?" options={["To make it slower", "To prove the failed request left no partial writes", "Because status codes are unreliable", "To test the browser"]} answer={1} explain="An error response can hide partial effects. Checking stored state confirms the failure was clean." />
+
+<Exercise id="api-test-authz" kind="scenario" prompt="User A requests /v1/orders/9, which belongs to user B. What should the test assert?" options={["200 and the order", "403 or 404 and no order data in the body", "500", "301"]} answer={1} explain="Authorisation tests must show another user's data is never returned, preferably as 404 to avoid confirming it exists." />
+
+<Exercise id="api-test-time" kind="debug" prompt="A test for a 15-minute token expiry sleeps for 15 minutes in CI. What is the better design?" options={["Run it nightly", "Inject a clock or use fake timers to jump forward instantly", "Delete the feature", "Use a shorter real sleep"]} answer={1} explain="Control time instead of waiting for it, so the test is fast and deterministic." />
+
+<Exercise id="api-test-db" kind="debug" prompt="Tests use SQLite in memory but production uses Postgres. A query using a Postgres-specific feature fails only in production. Why?" options={["Postgres is old", "The test database does not behave like production", "SQLite is faster", "The queries were too short"]} answer={1} explain="Differences in SQL dialect, types and constraints hide bugs. Test against the same database engine and major version you run." />

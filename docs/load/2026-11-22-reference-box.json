@@ -1,0 +1,398 @@
+{
+  "when": "2026-11-22T14:38:24.309Z",
+  "durationSecPerLevel": 5,
+  "results": [
+    {
+      "name": "api GET /healthz",
+      "concurrency": 1,
+      "requests": 10342,
+      "rps": 2068,
+      "p50": 0.3,
+      "p95": 1.2,
+      "p99": 4,
+      "max": 19.6,
+      "errorRate": 0,
+      "codes": {
+        "200": 10342
+      }
+    },
+    {
+      "name": "api GET /healthz",
+      "concurrency": 8,
+      "requests": 25526,
+      "rps": 5104,
+      "p50": 0.9,
+      "p95": 5.6,
+      "p99": 8.6,
+      "max": 29.2,
+      "errorRate": 0,
+      "codes": {
+        "200": 25526
+      }
+    },
+    {
+      "name": "api GET /healthz",
+      "concurrency": 32,
+      "requests": 27252,
+      "rps": 5445,
+      "p50": 4.1,
+      "p95": 14.5,
+      "p99": 20.9,
+      "max": 49.1,
+      "errorRate": 0,
+      "codes": {
+        "200": 27252
+      }
+    },
+    {
+      "name": "api GET /healthz",
+      "concurrency": 64,
+      "requests": 28967,
+      "rps": 5785,
+      "p50": 9.3,
+      "p95": 23.6,
+      "p99": 34.5,
+      "max": 78.9,
+      "errorRate": 0,
+      "codes": {
+        "200": 28967
+      }
+    },
+    {
+      "name": "api GET /auth/me (anon)",
+      "concurrency": 1,
+      "requests": 14003,
+      "rps": 2801,
+      "p50": 0.2,
+      "p95": 0.7,
+      "p99": 4,
+      "max": 16,
+      "errorRate": 0,
+      "codes": {
+        "200": 14003
+      }
+    },
+    {
+      "name": "api GET /auth/me (anon)",
+      "concurrency": 8,
+      "requests": 24004,
+      "rps": 4800,
+      "p50": 1,
+      "p95": 5.6,
+      "p99": 8.7,
+      "max": 20.7,
+      "errorRate": 0,
+      "codes": {
+        "200": 24004
+      }
+    },
+    {
+      "name": "api GET /auth/me (anon)",
+      "concurrency": 32,
+      "requests": 26656,
+      "rps": 5328,
+      "p50": 4.2,
+      "p95": 14,
+      "p99": 19.3,
+      "max": 35.7,
+      "errorRate": 0,
+      "codes": {
+        "200": 26656
+      }
+    },
+    {
+      "name": "api GET /auth/me (anon)",
+      "concurrency": 64,
+      "requests": 26283,
+      "rps": 5240,
+      "p50": 11,
+      "p95": 24.5,
+      "p99": 35.4,
+      "max": 95.1,
+      "errorRate": 0,
+      "codes": {
+        "200": 26283
+      }
+    },
+    {
+      "name": "api GET /progress (db read)",
+      "concurrency": 1,
+      "requests": 2177,
+      "rps": 435,
+      "p50": 2,
+      "p95": 4,
+      "p99": 7,
+      "max": 30.4,
+      "errorRate": 0,
+      "codes": {
+        "200": 2177
+      }
+    },
+    {
+      "name": "api GET /progress (db read)",
+      "concurrency": 8,
+      "requests": 3364,
+      "rps": 672,
+      "p50": 11.2,
+      "p95": 18.3,
+      "p99": 26.4,
+      "max": 40.3,
+      "errorRate": 0,
+      "codes": {
+        "200": 3364
+      }
+    },
+    {
+      "name": "api GET /progress (db read)",
+      "concurrency": 32,
+      "requests": 3497,
+      "rps": 696,
+      "p50": 43.1,
+      "p95": 68.4,
+      "p99": 80.4,
+      "max": 91.4,
+      "errorRate": 0,
+      "codes": {
+        "200": 3497
+      }
+    },
+    {
+      "name": "api GET /progress (db read)",
+      "concurrency": 64,
+      "requests": 3273,
+      "rps": 648,
+      "p50": 99.5,
+      "p95": 130.8,
+      "p99": 145.6,
+      "max": 162.2,
+      "errorRate": 0,
+      "codes": {
+        "200": 3273
+      }
+    },
+    {
+      "name": "api POST /progress/merge",
+      "concurrency": 1,
+      "requests": 1142,
+      "rps": 228,
+      "p50": 3.9,
+      "p95": 7.5,
+      "p99": 10.4,
+      "max": 19,
+      "errorRate": 0,
+      "codes": {
+        "200": 1142
+      }
+    },
+    {
+      "name": "api POST /progress/merge",
+      "concurrency": 8,
+      "requests": 2208,
+      "rps": 441,
+      "p50": 17.3,
+      "p95": 27.1,
+      "p99": 33.6,
+      "max": 45.3,
+      "errorRate": 0,
+      "codes": {
+        "200": 2208
+      }
+    },
+    {
+      "name": "api POST /progress/merge",
+      "concurrency": 32,
+      "requests": 1822,
+      "rps": 361,
+      "p50": 89.2,
+      "p95": 120.5,
+      "p99": 134.5,
+      "max": 148.3,
+      "errorRate": 0,
+      "codes": {
+        "200": 1822
+      }
+    },
+    {
+      "name": "api POST /progress/merge",
+      "concurrency": 64,
+      "requests": 1930,
+      "rps": 376,
+      "p50": 160.4,
+      "p95": 230,
+      "p99": 245.3,
+      "max": 252.1,
+      "errorRate": 0,
+      "codes": {
+        "200": 1930
+      }
+    },
+    {
+      "name": "ai POST /v1/ask (direct)",
+      "concurrency": 1,
+      "requests": 1011,
+      "rps": 202,
+      "p50": 4.7,
+      "p95": 7.1,
+      "p99": 9.6,
+      "max": 17.4,
+      "errorRate": 0,
+      "codes": {
+        "200": 1011
+      }
+    },
+    {
+      "name": "ai POST /v1/ask (direct)",
+      "concurrency": 8,
+      "requests": 1324,
+      "rps": 264,
+      "p50": 29,
+      "p95": 46.7,
+      "p99": 56.8,
+      "max": 67.8,
+      "errorRate": 0,
+      "codes": {
+        "200": 1324
+      }
+    },
+    {
+      "name": "ai POST /v1/ask (direct)",
+      "concurrency": 32,
+      "requests": 1227,
+      "rps": 242,
+      "p50": 130.6,
+      "p95": 166.6,
+      "p99": 178.9,
+      "max": 191.1,
+      "errorRate": 0,
+      "codes": {
+        "200": 1227
+      }
+    },
+    {
+      "name": "ai POST /v1/ask (direct)",
+      "concurrency": 64,
+      "requests": 1338,
+      "rps": 260,
+      "p50": 241.9,
+      "p95": 311.3,
+      "p99": 328,
+      "max": 364.3,
+      "errorRate": 0,
+      "codes": {
+        "200": 1338
+      }
+    },
+    {
+      "name": "api POST /ai/ask (gateway)",
+      "concurrency": 1,
+      "requests": 656,
+      "rps": 131,
+      "p50": 7.2,
+      "p95": 10.3,
+      "p99": 17.1,
+      "max": 45.8,
+      "errorRate": 0,
+      "codes": {
+        "200": 656
+      }
+    },
+    {
+      "name": "api POST /ai/ask (gateway)",
+      "concurrency": 8,
+      "requests": 1078,
+      "rps": 215,
+      "p50": 36.4,
+      "p95": 57,
+      "p99": 67.9,
+      "max": 76.4,
+      "errorRate": 0,
+      "codes": {
+        "200": 1078
+      }
+    },
+    {
+      "name": "api POST /ai/ask (gateway)",
+      "concurrency": 32,
+      "requests": 1448,
+      "rps": 286,
+      "p50": 110.2,
+      "p95": 154.8,
+      "p99": 176.6,
+      "max": 299.7,
+      "errorRate": 0,
+      "codes": {
+        "200": 1448
+      }
+    },
+    {
+      "name": "api POST /ai/ask (gateway)",
+      "concurrency": 64,
+      "requests": 1256,
+      "rps": 244,
+      "p50": 265.1,
+      "p95": 349.1,
+      "p99": 386.6,
+      "max": 421.3,
+      "errorRate": 0,
+      "codes": {
+        "200": 1256
+      }
+    },
+    {
+      "name": "web GET / (next)",
+      "concurrency": 1,
+      "requests": 1191,
+      "rps": 238,
+      "p50": 3.6,
+      "p95": 8.3,
+      "p99": 16.9,
+      "max": 29.7,
+      "errorRate": 0,
+      "codes": {
+        "200": 1191
+      }
+    },
+    {
+      "name": "web GET / (next)",
+      "concurrency": 8,
+      "requests": 1955,
+      "rps": 390,
+      "p50": 18.8,
+      "p95": 34.2,
+      "p99": 45.4,
+      "max": 56.1,
+      "errorRate": 0,
+      "codes": {
+        "200": 1955
+      }
+    },
+    {
+      "name": "web GET / (next)",
+      "concurrency": 32,
+      "requests": 2424,
+      "rps": 483,
+      "p50": 65.3,
+      "p95": 94.3,
+      "p99": 112.8,
+      "max": 232.6,
+      "errorRate": 0,
+      "codes": {
+        "200": 2424
+      }
+    },
+    {
+      "name": "web GET / (next)",
+      "concurrency": 64,
+      "requests": 2493,
+      "rps": 493,
+      "p50": 126,
+      "p95": 174.4,
+      "p99": 279.6,
+      "max": 523.4,
+      "errorRate": 0,
+      "codes": {
+        "200": 2493
+      }
+    }
+  ]
+}

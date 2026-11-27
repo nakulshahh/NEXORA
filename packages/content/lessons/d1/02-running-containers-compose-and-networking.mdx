@@ -1,0 +1,104 @@
+---
+chapter: D1
+slug: running-containers-compose-and-networking
+title: "Running containers: volumes, networking and Compose"
+order: 2
+summary: "Containers are disposable, so data lives in volumes, configuration in environment variables, and services find each other by name on a network. Docker Compose describes a whole multi-service stack and its startup order in one file."
+objectives:
+  - Explain ephemeral containers and where state must live
+  - Map ports, networks and service names between containers and the host
+  - Read a Compose file with health-ordered startup
+  - Debug a container that exits, restarts or cannot connect
+concepts: [volume, bind mount, port mapping, bridge network, service discovery, Docker Compose, depends_on, healthcheck, restart policy, logs]
+reading:
+  - title: "Docker docs: Compose file reference"
+    url: "https://docs.docker.com/reference/compose-file/"
+  - title: "Docker docs: Networking overview"
+    url: "https://docs.docker.com/engine/network/"
+misconceptions:
+  - belief: "localhost inside a container reaches my database on the host or in another container."
+    correction: "Inside a container, localhost is the container itself. Other containers are reached by their service name on a shared network, and the host by a special name such as host.docker.internal."
+  - belief: "depends_on guarantees the database is ready before my app starts."
+    correction: "By default it only orders container start. Readiness needs a health check and a condition (service_healthy), or the app must retry its connection."
+---
+
+## Why it exists
+
+A single container is a toy; real systems are an API, a database, a worker and a cache that must start in the right order, reach each other, keep data and be reproducible on every laptop. Compose captures that as a file.
+
+<Callout kind="why">
+Containers are cattle, not pets: you can delete and recreate any of them. That only works if state, configuration and addresses live outside the container.
+</Callout>
+
+## How it works
+
+### Where state lives
+
+A container's own filesystem is thrown away with the container. For data that must survive use a **volume** (managed by Docker, the right choice for database data) or a **bind mount** (a host folder, handy for source code in development). Configuration comes from **environment variables** (B11); logs go to standard output so the platform can collect them.
+
+### Ports and networks
+
+Containers on the same user-defined **network** reach each other by **service name**: the API connects to `db:5432`, not `localhost`. A container's ports are private until you **publish** them: `-p 8080:4000` maps host port 8080 to container port 4000. Publish only what must be reachable from outside; the database should be on the internal network only.
+
+### Compose
+
+This project's `docker-compose.yml` describes the whole stack. The important idea is ordering by *health*, not by start:
+
+```yaml file=compose.yml mark=3,4,5,9,10
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U postgres"], interval: 5s }
+  migrate:
+    depends_on: { db: { condition: service_healthy } }
+  api:
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+```
+
+`db` is "healthy" only when it accepts connections; `migrate` runs once and must succeed; `api` starts only after that. `docker compose up --build` is then the whole system, and `docker compose down -v` removes containers and volumes for a clean slate.
+
+**Verification status:** as noted in the previous lesson, there was no Docker daemon in the development sandbox, so this file was checked by reasoning and by running each step by hand, not by `docker compose up`. If it fails on your machine, the logs below will say why, and a report helps fix it.
+
+### Debugging containers
+
+- `docker compose ps` and `docker ps -a`: state and **exit codes** (137 means killed, often out of memory or after the stop timeout; 143 means stopped by SIGTERM; 1 usually an application error).
+- `docker logs -f SERVICE`: standard output and error.
+- `docker exec -it SERVICE sh`: a shell inside a running container (slim images may lack tools).
+- `docker inspect`: environment, mounts, networks, health status.
+- "Connection refused" between services: check the hostname (service name, not localhost), that the dependency is listening on `0.0.0.0` (not `127.0.0.1`), and that both are on the same network.
+- A container restarting in a loop: read the last logs before the restart; often a missing environment variable failing config validation, which is exactly the fail-fast behaviour you wanted.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Binding the server to `127.0.0.1` inside the container. It is then unreachable from outside the container even with the port published. Listen on `0.0.0.0`.
+</Callout>
+
+- **Using localhost to reach other services.**
+- **Writing data inside the container** and losing it on recreate.
+- **Publishing the database port** to the world.
+- **Assuming depends_on means ready.**
+- **A `restart: always` policy hiding a crash loop** nobody looks at.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Compose is excellent for development and small single-host deployments and does not provide multi-host scheduling, rolling updates or self-healing at scale, which is what orchestrators such as Kubernetes add, with considerable complexity.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Treat Compose as a development and small-scale tool, keep volumes backed up (the restore drill applies), set resource limits, collect container logs centrally, and keep the same image from CI through staging to production, changing only environment configuration.
+</Callout>
+
+## Check yourself
+
+<Exercise id="dkc-localhost" kind="debug" prompt="Your API container fails to connect to localhost:5432 although the database container is running. What is wrong?" options={["Postgres is down", "localhost inside the API container is the API container itself; use the db service name", "Port 5432 is reserved", "Compose cannot run databases"]} answer={1} explain="Each container has its own network namespace. Containers on the same network reach each other by service name." />
+
+<Exercise id="dkc-depends" kind="quiz" prompt="What does depends_on with condition service_healthy add over plain depends_on?" options={["Faster builds", "It waits until the dependency's health check passes, not just until it has started", "It restarts the dependency", "It publishes ports"]} answer={1} explain="A started container may not yet accept connections. A health condition waits for real readiness." />
+
+<Exercise id="dkc-exit" kind="predict" prompt="A container shows exit code 137. What is the most likely meaning?" options={["Success", "It was killed with SIGKILL, often for exceeding its memory limit or the stop timeout", "Syntax error", "Port conflict"]} answer={1} explain="137 is 128 plus 9. SIGKILL cannot be handled, and the usual causes are an out-of-memory kill or being force-stopped after the grace period." />
+
+<Exercise id="dkc-data" kind="scenario" prompt="After recreating the database container all data is gone. What should have been configured?" options={["A bigger image", "A named volume mounted at the database data directory", "More environment variables", "A different tag"]} answer={1} explain="The container filesystem is disposable. Database data belongs on a volume that survives container recreation." />

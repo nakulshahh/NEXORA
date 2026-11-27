@@ -1,0 +1,107 @@
+---
+chapter: E3
+slug: retrieval-augmented-generation-and-evaluation
+title: "RAG in production: retrieval, refusal and evaluation"
+order: 1
+summary: "Retrieval-augmented generation answers from your documents instead of the model's memory. Its quality is decided by retrieval and by knowing when to refuse, and both must be measured on questions you wrote before looking at the results."
+objectives:
+  - Describe the retrieve, assemble and answer pipeline and where it fails
+  - Compare lexical, vector and hybrid retrieval using recall and MRR
+  - Explain an evidence gate and measure it with held-out questions
+  - Design an evaluation set that does not leak into tuning
+concepts: [RAG, retrieval, hybrid search, embedding, recall at k, MRR, evidence gate, refusal, held-out evaluation, extractive answer, citation]
+reading:
+  - title: "Anthropic: Contextual Retrieval"
+    url: "https://www.anthropic.com/news/contextual-retrieval"
+  - title: "Stanford IR book: Evaluation in information retrieval"
+    url: "https://nlp.stanford.edu/IR-book/html/htmledition/evaluation-in-information-retrieval-1.html"
+misconceptions:
+  - belief: "RAG removes hallucination because the answer comes from documents."
+    correction: "If retrieval returns the wrong passages, or nothing relevant, a generative model still produces fluent text. Quality depends on retrieval, on refusing when evidence is missing and on checking that the answer is supported."
+  - belief: "A demo that answers ten questions well proves the system works."
+    correction: "Without a labelled question set, including out-of-scope questions and paraphrases, and held-out measurement, you cannot tell whether a change helped. Numbers beat impressions."
+---
+
+## Why it exists
+
+A model alone does not know your product's documents and may invent. RAG feeds it relevant passages at question time, so answers can be grounded and cited. The engineering question is no longer "which model" but "did we find the right text, and do we know when we did not".
+
+<Callout kind="why">
+This course's own tutor is a RAG system, deliberately without a generative model, which makes it a clean subject: every answer line must be a sentence from a cited lesson, so you can measure retrieval and refusal without any model noise.
+</Callout>
+
+## How it works
+
+### The pipeline
+
+1. **Ingest**: split documents into chunks (here: by lesson section and block type, keeping the heading path as context), store text, a keyword index and an embedding per chunk.
+2. **Retrieve**: for a question, run keyword search and vector search, then merge the rankings (reciprocal rank fusion) into one list.
+3. **Gate**: decide whether the retrieved text can support an answer at all.
+4. **Answer**: a generative model writes from the passages, or, as here, the system selects sentences directly (**extractive**), always with citations.
+
+Failures happen at each stage: bad chunks cut an idea in half, a poor retriever misses the right passage, a missing gate answers anyway, and a generator drifts away from the sources.
+
+### Measure retrieval
+
+For labelled questions where you know which lesson holds the answer:
+
+- **recall@k**: the right passage is within the top k.
+- **MRR**: the average of 1 divided by the rank of the first correct result.
+
+On this project's held-out half (41 in-scope and 10 out-of-scope questions; the other half was used for tuning), measured in the sandbox with the zero-cost hashing embedder:
+
+```text file=eval.txt
+mode      recall@1  recall@3  MRR
+lexical     0.56      0.85    0.70
+vector      0.32      0.61    0.52
+hybrid      0.76      0.93    0.84
+```
+
+Hybrid beat both ingredients. The vector row is weak because the embedder here is a dependency-free hashing model, which shares the lexical weakness without its precision; a real sentence-embedding model would likely lift it, but it could not be downloaded in the build environment, so that number is unmeasured. Say so rather than guess.
+
+### The evidence gate
+
+Retrieval always returns *something*. A question about a tool the documents never mention still retrieves the closest passages. The gate asks whether the question's distinctive terms actually appear in them, weighting rare terms more than common ones, and requires the keyword or vector score to be high enough. On the held-out out-of-scope questions (many deliberately topic-adjacent: tools and ideas near the course topics but never taught), the hybrid refusal rate was 0.80 against an in-scope answer rate of 0.90. Weighting terms by rarity is what lifted refusal (measured on all 21 out-of-scope questions before the held-out split: 0.60 to 0.80). Those two numbers are the trade: raise the bar and you refuse more questions you could have answered.
+
+Some leaks remain: "What is a Kubernetes operator?" is answered because every word exists in the corpus even though the *combination* is uncovered. A lexical gate cannot see that; semantic models and answer-support checks can reduce it.
+
+### Evaluation hygiene
+
+- **Write questions from the documents before looking at retrieval output**, and include paraphrases that avoid the documents' vocabulary.
+- **Split into development and held-out halves.** Tune thresholds on development; report results on the held-out half, which the tuning never saw.
+- **Include out-of-scope questions**, since refusing correctly is half the job.
+- **Re-run when the corpus grows.** Adding lessons changed the numbers: recall@3 slipped from 0.96 to 0.93 and an out-of-scope question started being answered. Evaluation is a regression test, not a one-time result.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Tuning the thresholds on all your questions and quoting the result. You have measured how well you fit those questions, not how well the system works.
+</Callout>
+
+- **Chunks too large or too small**, with no heading context.
+- **Only testing questions that have answers.**
+- **Using a generative model without citations** or without checking support.
+- **Changing several things between evaluations.**
+- **Treating an evaluation set as fixed** while the corpus changes.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+An extractive system is cheap, predictable and never invents, and reads less smoothly than generated prose. A generative layer reads better and can synthesise across passages, and adds cost, latency and a new failure mode (unsupported claims) that needs its own checks.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Version the corpus and embeddings, run the evaluation in CI with thresholds that fail the build on a regression, log (without personal text) the gate decision and retrieval scores, review refusals and unanswered questions regularly to find content gaps, and rate-limit the endpoint.
+</Callout>
+
+## Check yourself
+
+<Exercise id="rag-mrr" kind="predict" prompt="For three questions the correct passage appears at ranks 1, 2 and not in the top results (score 0). What is the MRR?" options={["0.50", "1.00", "0.33", "0.75"]} answer={0} explain="MRR averages the reciprocal ranks: (1 + 0.5 + 0) / 3 = 0.5." />
+
+<Exercise id="rag-gate" kind="quiz" prompt="What is an evidence gate for?" options={["Making answers longer", "Refusing to answer when retrieved text does not support the question", "Encrypting passages", "Speeding up search"]} answer={1} explain="Retrieval always returns something. The gate decides whether it is relevant enough to answer from." />
+
+<Exercise id="rag-leak" kind="scenario" prompt="You tune thresholds on all 80 questions and report 98 percent accuracy. Why is that number misleading?" options={["It is too high to be real", "It was measured on the same data used for tuning, so it overstates real performance", "Accuracy cannot be measured", "Thresholds do not matter"]} answer={1} explain="Report on a held-out split that tuning never saw." />
+
+<Exercise id="rag-adjacent" kind="debug" prompt="The tutor answers 'What is a Kubernetes operator?' although lessons mention Kubernetes but never operators. Why might a lexical gate pass it?" options={["Operators are common", "Every word of the question appears somewhere in the corpus, so term coverage is high even though the combination is uncovered", "The gate is disabled", "The embedder is too large"]} answer={1} explain="Term-based checks cannot see missing combinations of known words. Semantic scoring or answer-support verification is needed." />

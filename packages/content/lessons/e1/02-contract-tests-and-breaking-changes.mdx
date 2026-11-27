@@ -1,0 +1,98 @@
+---
+chapter: E1
+slug: contract-tests-and-breaking-changes
+title: "Contract tests, versioning and breaking changes"
+order: 2
+summary: "A contract is only useful if the running server matches it and changes do not break clients. Test responses against the document, classify changes as compatible or breaking, and evolve the API without surprising anyone."
+objectives:
+  - Test that real responses conform to the documented schema
+  - Classify an API change as backwards compatible or breaking
+  - Choose a versioning and deprecation strategy
+  - Apply the robustness principle to clients and servers
+concepts: [contract test, breaking change, backwards compatibility, versioning, deprecation, additive change, tolerant reader, sunset header]
+reading:
+  - title: "Stripe: API versioning"
+    url: "https://stripe.com/blog/api-versioning"
+  - title: "RFC 8594: The Sunset HTTP Header Field"
+    url: "https://www.rfc-editor.org/rfc/rfc8594"
+misconceptions:
+  - belief: "Adding a field to a response is always safe."
+    correction: "It is safe for tolerant clients. A client that rejects unknown fields, or an enum that gains a new value a client's switch does not handle, can break. Compatibility depends on how clients read, so state your rules and test them."
+  - belief: "Versioning in the URL (v1, v2) solves breaking changes."
+    correction: "It lets you ship a new incompatible version, and you now run two. Prefer additive evolution; reserve a new version for changes you cannot avoid, and plan how long the old one lives."
+---
+
+## Why it exists
+
+The contract document promises a shape. Servers change daily, and every change risks silently breaking a client you cannot see. Contract tests catch drift on your side, and discipline about compatibility protects the other side.
+
+<Callout kind="why">
+You do not control when clients upgrade. An API change is a deploy that happens on other people's schedule, so compatibility is the default and breakage a deliberate, announced exception.
+</Callout>
+
+## How it works
+
+### Testing conformance
+
+Drive the real app (as in the testing chapter) and validate each response body against the schema in the document for that status code. A contract test fails when a field is missing, has the wrong type, or when an undocumented status appears:
+
+```ts file=contract.test.ts mark=2,3
+const res = await request(app).post("/api/auth/login").send(creds);
+const schema = openApiDocument.paths["/api/auth/login"].post.responses[res.status];
+expect(schema).toBeDefined();                    // every status the server returns is documented
+expect(validate(schema, res.body)).toEqual([]);  // and the body matches it
+```
+
+This turns "the docs are right" from a hope into a failing test. If the document is generated from the same schemas, add tests for the parts that are not (error responses, headers, status codes).
+
+### What breaks clients
+
+**Compatible (additive)** changes: adding an optional request field, adding a new response field, adding a new endpoint, adding an optional header. **Breaking** changes: removing or renaming a field, changing a type (number to string), making an optional field required, tightening validation (a shorter maximum length), changing the meaning of a value or a status code, removing an enum value, and changing error shapes. Treat a *new enum value in a response* as potentially breaking for strict clients, and document that clients must handle unknown values.
+
+Automated tools can diff two OpenAPI documents and flag breaking changes in CI, making the review explicit.
+
+### Be tolerant, be strict
+
+The robustness principle for APIs: **clients ignore fields they do not know** (tolerant reader), and **servers validate what they receive** strictly (A5). If every client tolerates additions, you can evolve additively for years.
+
+### Evolving without version numbers
+
+Add the new field alongside the old; keep both populated; announce the old as **deprecated**; measure who still uses it (log by client or key); remove it after a long, published notice. HTTP can carry the signal: a `Deprecation` header, a `Sunset` header with the removal date (RFC 8594) and a link to migration notes.
+
+### When you must version
+
+Some changes cannot be additive. Options: a URL version (`/v2/...`, simple and visible), a header or date-based version pinned per client (as large payment APIs do, so each integration upgrades when ready), or a new resource name. Whatever you pick: define the support window, run old and new with shared code paths, and avoid more than two live versions.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Removing a "unused" field because the server logs show no reads. Clients that read it rarely or seasonally (a monthly report) will break later. Deprecate with a date first.
+</Callout>
+
+- **Changing error codes** that clients branch on.
+- **Tightening validation** in a minor release.
+- **Silent behaviour changes** under an unchanged schema (sorting, default page size).
+- **No usage data** per version or client.
+- **Two versions with copy-pasted logic** that diverge.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Strict compatibility keeps clients happy and accumulates legacy fields and code. Frequent clean breaks keep the API tidy and impose migration work on every consumer. Public APIs lean toward compatibility; internal APIs, where you control clients, can change faster with coordinated deploys.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Run an OpenAPI diff in CI that blocks breaking changes without an explicit override, log the client and version on every request, publish a changelog and deprecation policy, and send sunset headers and emails well before removal.
+</Callout>
+
+## Check yourself
+
+<Exercise id="brk-classify" kind="quiz" prompt="Which change is breaking for existing clients?" options={["Adding an optional response field", "Renaming a response field", "Adding a new endpoint", "Adding an optional request header"]} answer={1} explain="Clients reading the old name will no longer find it. The others are additive." />
+
+<Exercise id="brk-tolerant" kind="scenario" prompt="A client parses responses with a strict schema that rejects unknown fields, and your new optional field breaks it. What principle was violated on the client side?" options={["Tolerant reader: ignore unknown fields", "Use more retries", "Cache more", "Use HTTP/2"]} answer={0} explain="Clients should ignore fields they do not understand so servers can add fields compatibly." />
+
+<Exercise id="brk-deprecate" kind="scenario" prompt="You want to remove a field. What is the responsible process?" options={["Delete it today", "Deprecate it, announce a sunset date, measure remaining usage, then remove", "Rename it silently", "Version the whole company"]} answer={1} explain="Announce, measure and give time to migrate, using Deprecation and Sunset headers and migration notes." />
+
+<Exercise id="brk-contract" kind="debug" prompt="Docs say login returns a 'token' field but the server returns 'accessToken' and no test noticed. What is missing?" options={["More comments", "A contract test validating real responses against the documented schema", "A faster server", "Another database"]} answer={1} explain="A test that checks responses against the contract fails when the server and document disagree." />

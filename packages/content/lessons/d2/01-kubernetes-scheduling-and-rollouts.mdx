@@ -1,0 +1,92 @@
+---
+chapter: D2
+slug: kubernetes-scheduling-and-rollouts
+title: "Kubernetes: scheduling, self-healing and rolling updates"
+order: 1
+summary: "Kubernetes keeps a declared desired state true. You describe replicas, images and probes; controllers schedule pods onto nodes, restart failures and roll out new versions gradually. It is powerful, and often more than a small system needs."
+objectives:
+  - Describe pods, deployments, services and the control loop
+  - Explain how readiness and liveness probes drive traffic and restarts
+  - Walk through a rolling update and how to roll back
+  - Decide whether Kubernetes is worth its cost for a given system
+concepts: [pod, deployment, ReplicaSet, service, node, scheduler, control loop, readiness probe, liveness probe, rolling update, resource requests and limits]
+reading:
+  - title: "Kubernetes docs: Concepts overview"
+    url: "https://kubernetes.io/docs/concepts/overview/"
+  - title: "Kubernetes docs: Deployments"
+    url: "https://kubernetes.io/docs/concepts/workloads/controllers/deployment/"
+misconceptions:
+  - belief: "Kubernetes is the natural next step after Docker for any application."
+    correction: "It solves problems of running many services across many machines. For one or a few services, a managed platform or Compose on one host is simpler, cheaper and easier to debug. Adopt it when the problems it solves are yours."
+  - belief: "If a pod is running, it is receiving traffic."
+    correction: "Traffic goes only to pods whose readiness probe passes. A pod can be running and not ready, which is how a rolling update avoids sending users to a server that has not finished starting."
+---
+
+## Why it exists
+
+Once you have many containers on many machines, someone must decide where each runs, restart those that die, replace versions without downtime and give them stable addresses. Orchestrators automate this. Kubernetes is the dominant one.
+
+<Callout kind="why">
+The core idea is a **control loop**: you declare the desired state ("3 replicas of image v2"), and controllers continuously compare it with reality and act to close the gap.
+</Callout>
+
+## How it works
+
+**Verification status:** there is no Kubernetes cluster in the development sandbox, so none of this lesson's behaviour was reproduced here. It follows the official documentation linked above; try it on a local cluster (kind or minikube) to see it happen.
+
+### The objects
+
+- **Pod**: one or more containers sharing a network and storage; the smallest schedulable unit. Pods are disposable and have changing IP addresses.
+- **Deployment**: declares the desired number of identical pods and the image version; it creates a ReplicaSet that keeps that many alive.
+- **Service**: a stable name and virtual IP that load-balances to the ready pods matching a label, so callers do not track pod addresses.
+- **Node**: a machine in the cluster. The **scheduler** places each pod on a node that has the resources it **requests**; **limits** cap what it may use (exceeding memory gets it killed with 137, as in the Docker chapter).
+- **Ingress** or gateway: routes external HTTP traffic to services.
+- **ConfigMap and Secret**: configuration and sensitive values injected as environment variables or files (B11).
+
+### Probes
+
+- **Readiness probe**: is this pod ready for traffic? Failing pods are removed from the Service endpoints (it is the "not ready" signal from the graceful-shutdown lesson).
+- **Liveness probe**: is it stuck beyond recovery? Failing pods are restarted. Keep it cheap and independent of dependencies, or a database blip restarts every pod at once.
+- **Startup probe**: allows slow starts without liveness killing the pod.
+
+### Rolling updates
+
+Changing the image in a Deployment starts a rollout: new pods start, and once ready, old pods are terminated, controlled by `maxSurge` and `maxUnavailable`. Terminating a pod runs the sequence from the graceful-shutdown lesson: removed from endpoints, SIGTERM, grace period, SIGKILL. If the new version never becomes ready, the rollout stalls and the old pods keep serving; `kubectl rollout undo` returns to the previous version. This is why readiness probes and graceful shutdown are what make deploys safe.
+
+### Is it worth it?
+
+Kubernetes costs a learning curve, cluster operations (or a managed service's price) and a lot of YAML. It pays when you have many services, need autoscaling, multi-team self-service or portability. Alternatives: a platform-as-a-service, managed container services, or Compose on a VM.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Setting no resource requests and limits. The scheduler cannot place pods sensibly, one pod can starve its neighbours, and overloaded nodes evict pods unpredictably.
+</Callout>
+
+- **Liveness probes that depend on the database.**
+- **Skipping readiness probes**, so rollouts send traffic to unready pods.
+- **Latest tags** and no rollout history.
+- **Putting state in pods** without persistent storage.
+- **Adopting Kubernetes for one service.**
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+You get declarative deploys, self-healing and a large ecosystem, and pay in complexity, cost and a new category of failure (misconfigured probes, resource limits, networking). The control loop is also eventually consistent: changes take seconds to propagate.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Use managed control planes where possible, set requests, limits and probes for every workload, run at least two replicas across zones, protect rollouts with PodDisruptionBudgets, keep manifests in version control and apply them through CI, and test node and pod failure before relying on self-healing.
+</Callout>
+
+## Check yourself
+
+<Exercise id="k8s-loop" kind="quiz" prompt="What is the core idea of Kubernetes controllers?" options={["Run one big server", "Continuously reconcile actual state toward the declared desired state", "Replace Docker images", "Encrypt traffic"]} answer={1} explain="You declare what should be true; controllers observe reality and act to make it so, again and again." />
+
+<Exercise id="k8s-ready" kind="scenario" prompt="During a rolling update users briefly get errors because new pods receive traffic before the app has finished starting. What is missing?" options={["More replicas", "A readiness probe so traffic waits until the pod is ready", "A bigger node", "A liveness probe on the database"]} answer={1} explain="Services send traffic only to ready pods. Without a readiness probe, 'running' counts as ready." />
+
+<Exercise id="k8s-liveness" kind="debug" prompt="The database restarts for 20 seconds and then all application pods restart repeatedly. The liveness probe calls the database. What is the problem?" options={["Pods are too small", "A dependency-based liveness probe turns a dependency blip into a restart of every pod", "Services are broken", "Nodes ran out of disk"]} answer={1} explain="Liveness should check only that the process itself is stuck. Dependency checks belong in readiness or in monitoring." />
+
+<Exercise id="k8s-need" kind="scenario" prompt="A team has one API, one worker and one database and about 50 users. Is Kubernetes the right default?" options={["Always yes", "Usually no; a managed platform or Compose on one host is simpler and cheaper at that scale", "Only with 100 clusters", "It is required for Docker"]} answer={1} explain="Adopt orchestration when its problems are yours. For a small system its overhead outweighs the benefit." />

@@ -1,0 +1,121 @@
+---
+chapter: A1
+slug: methods-status-headers
+title: "Methods, status codes and the headers that matter"
+order: 2
+summary: "The vocabulary of HTTP semantics: which methods are safe or idempotent, what the status families promise, and how conditional requests save bandwidth."
+objectives:
+  - Choose a method based on whether it is safe and idempotent
+  - Pick an accurate status code family for a given outcome
+  - Explain how ETag and If-None-Match produce a 304 response
+  - Recognise the headers that control content type, caching and authorization
+concepts: [safe methods, idempotency, status codes, ETag, conditional request, Cache-Control, Content-Type]
+misconceptions:
+  - belief: "POST is for creating and PUT is for updating, so the verb is just a naming convention."
+    correction: "Methods carry guarantees. PUT is idempotent (repeating it has the same effect), POST is not, and clients, proxies and retry logic rely on that."
+  - belief: "If the request failed I can return 200 with an error in the JSON."
+    correction: "Intermediaries, monitors and clients act on the status code. A 200 with an error body hides failures from caches, retries and alerting."
+---
+
+## Why it exists
+
+A request must say *what you want done*, and a response must say *how it went*, in a way that software you did not write (browsers, CDNs, proxies, retry libraries) can act on without understanding your business. **Methods** and **status codes** are that shared vocabulary.
+
+<Callout kind="why">
+The precise meaning of GET, PUT and 404 is what lets a CDN cache your pages and a client safely retry a failed request. Meanings are contracts, not decoration.
+</Callout>
+
+## How it works
+
+### Methods and their guarantees
+
+- **Safe** means the request does not change server state, so it can be prefetched and cached freely.
+- **Idempotent** means doing it once or ten times leaves the same final state, so a client may retry after a timeout.
+
+| Method | Safe | Idempotent | Typical use |
+| --- | --- | --- | --- |
+| GET | yes | yes | read a resource |
+| HEAD | yes | yes | headers only |
+| PUT | no | yes | replace a resource |
+| DELETE | no | yes | remove a resource |
+| POST | no | no | create or run an action |
+| PATCH | no | not guaranteed | partial update |
+
+Idempotent describes the *effect on state*, not the response: a second `DELETE` may return 404, but the end state is identical.
+
+### Status families
+
+| Range | Meaning | Examples |
+| --- | --- | --- |
+| 2xx | success | 200 OK, 201 Created, 204 No Content |
+| 3xx | go elsewhere or use your copy | 301 Moved, 304 Not Modified |
+| 4xx | the client's request is wrong | 400, 401, 403, 404, 409, 429 |
+| 5xx | the server failed | 500, 502, 503, 504 |
+
+Notice **401** means "I do not know who you are" and **403** means "I know who you are and the answer is no".
+
+### The headers you will use daily
+
+- `Content-Type` states how to interpret the body (`application/json`).
+- `Accept` states what the client can handle.
+- `Authorization` carries credentials.
+- `Cache-Control` states how long and by whom a response may be reused.
+- `ETag` is a version fingerprint for a response.
+
+### Conditional requests: saving the body
+
+```http file=conditional.txt mark=2,6
+GET /report.json HTTP/1.1
+If-None-Match: "v17"
+
+HTTP/1.1 304 Not Modified
+ETag: "v17"
+```
+
+The client says "I already have version v17". If it is still current, the server answers 304 with no body, and the client reuses its copy. One round trip, almost no bytes.
+
+```js file=etag.mjs mark=6,7
+import http from "node:http";
+
+const body = JSON.stringify({ total: 17 });
+const etag = '"v17"';
+http.createServer((req, res) => {
+  if (req.headers["if-none-match"] === etag) { res.writeHead(304, { ETag: etag }); return res.end(); }
+  res.writeHead(200, { "Content-Type": "application/json", ETag: etag, "Cache-Control": "max-age=0, must-revalidate" });
+  res.end(body);
+}).listen(3000);
+```
+
+## Common mistakes
+
+<Callout kind="mistake">
+Using GET for actions with side effects, such as `GET /delete?id=5`. Browsers prefetch links, crawlers follow them, and caches may replay them. A harmless-looking page load can delete data.
+</Callout>
+
+- **Everything is 200 or 500.** Return the most specific code you can; clients branch on it.
+- **Retrying non-idempotent requests blindly.** A retried `POST /charge` can charge twice.
+- **Confusing 401 and 403**, which breaks client login flows.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Strict semantics make your API predictable and cacheable, but real operations do not always fit. A "cancel order" action is awkward as a pure resource update. Prefer honouring the guarantees (safe, idempotent) over matching a verb to a sentence.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Retries are where semantics pay off. Because PUT and DELETE are idempotent, retry middleware can repeat them. For POST, make your own operations idempotent with an idempotency key so a retry after a timeout does not duplicate the effect.
+</Callout>
+
+Status codes also drive your dashboards: error rate is usually the share of 5xx, and a spike in 429 tells you clients are being rate limited.
+
+## Check yourself
+
+<Exercise id="idempotent-pick" kind="quiz" prompt="A client times out after sending DELETE /orders/9 and wants to retry safely. Why is that allowed?" options={["DELETE is safe", "DELETE is idempotent: repeating it leaves the same final state", "Servers ignore duplicate requests", "Retries are always safe in HTTP"]} answer={1} explain="Idempotency is about the resulting state. Deleting an already deleted order leaves it deleted, although the response may differ." />
+
+<Exercise id="status-pick" kind="scenario" prompt="A logged-in user requests an admin page they are not allowed to see. Which status best describes this?" options={["401 Unauthorized", "403 Forbidden", "404 Not Found only", "500 Internal Server Error"]} answer={1} explain="The server knows who they are (authenticated) and refuses (not authorised), which is 403. 401 means the credentials are missing or invalid." />
+
+<Exercise id="etag-predict" kind="predict" prompt="A client sends If-None-Match: v17 and the server’s current ETag is v18. What happens?" options={["304 with no body", "200 with the full body and the new ETag", "400 Bad Request", "The connection is closed"]} answer={1} explain="The condition (my copy is current) is false, so the server sends the full new representation along with its new ETag." />
+
+<Exercise id="get-sideeffect" kind="debug" prompt="Users complain that items vanish from their cart overnight. Logs show a search crawler requesting /cart/remove?item=3 links. What is the design error?" options={["The crawler is malicious", "A state-changing action is exposed as GET, which is assumed safe and gets prefetched or crawled", "The cart uses too many headers", "ETags are missing"]} answer={1} explain="GET must be safe. Use POST, PUT or DELETE for state changes so crawlers, prefetchers and caches never trigger them." />

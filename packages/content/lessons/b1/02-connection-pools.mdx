@@ -1,0 +1,98 @@
+---
+chapter: B1
+slug: connection-pools
+title: "Connections and connection pools"
+order: 2
+summary: "Each database connection is a costly, limited resource. A pool reuses a small fixed set of them and queues the rest, which is faster and protects the database from being overwhelmed."
+objectives:
+  - Explain why opening a connection per request is slow and does not scale
+  - Describe how a pool lends, returns and queues work
+  - Predict completion times when concurrent queries outnumber pooled connections
+  - Size a pool against the database's connection limit and the number of app instances
+concepts: [connection pool, max connections, pool size, queueing, connection leak, pooler, timeout]
+reading:
+  - title: "node-postgres: Pooling"
+    url: "https://node-postgres.com/features/pooling"
+  - title: "PostgreSQL wiki: Number of database connections"
+    url: "https://wiki.postgresql.org/wiki/Number_Of_Database_Connections"
+misconceptions:
+  - belief: "A bigger connection pool always means better throughput."
+    correction: "The database can only do as much work in parallel as it has CPU cores and disk bandwidth. Past that point more connections just add contention and memory use. A small pool with a queue usually beats a huge one."
+  - belief: "Opening a connection is cheap, so each request can open its own."
+    correction: "A new connection involves a network round trip, authentication, often TLS, and a new server process or session. Under load, per-request connections waste time and quickly hit the server's connection limit."
+---
+
+## Why it exists
+
+Your app talks to the database over a **connection**: an authenticated session with its own state and, in PostgreSQL, its own server process using memory. Creating one takes several network round trips (TCP, TLS, authentication, session setup). Doing that for every request adds latency and wastes work; and the database only allows a limited number at once (`max_connections` defaults to 100 in PostgreSQL).
+
+<Callout kind="why">
+A pool pays the connection cost once and turns "unlimited concurrent requests" into "a bounded number of concurrent queries plus a queue", which is something a database can survive.
+</Callout>
+
+## How it works
+
+A pool owns up to `max` open connections. A request **borrows** one, runs its queries, and **returns** it. If none is free, the request waits in a queue until one is returned (or a timeout fires).
+
+Measured on a local PostgreSQL 16 with no TLS (so the real network cost is higher):
+
+```js file=pool.mjs mark=3,8,9
+// opening, querying and closing a fresh connection each time, averaged over 200 runs
+//   4.40 ms per query
+// reusing one open connection, same query
+//   0.075 ms per query
+```
+
+Even with zero network distance, a fresh connection cost about 60 times more than reusing one. Across a real network with TLS the gap is larger.
+
+### The queue
+
+Take a pool of `max: 2` and six concurrent queries that each take 100 ms:
+
+```js file=queue.mjs mark=1,2
+const pool = new pg.Pool({ connectionString, max: 2 });
+await Promise.all(Array.from({ length: 6 }, () => pool.query("select pg_sleep(0.1)")));
+```
+
+The queries finished at about 105, 105, 207, 207, 309 and 309 ms: two at a time, three waves. That is the pool doing its job: the database never ran more than two at once, and the other four waited their turn instead of piling on.
+
+### The hard limit
+
+Opening plain connections in a loop on the same server, the 101st was refused with `sorry, too many clients already`. With several app instances each holding a pool, `instances × pool size` must stay under the database's limit, with room left for admin tools and migrations.
+
+### Sizing
+
+Start small. A common starting point is a pool of roughly the database's core count times a small factor (for example 2 to 4 times), then measure. Throughput usually rises and then flattens or falls as connections increase. If many instances need many connections, put an external pooler (such as PgBouncer) in front, which multiplexes thousands of client connections onto a few server connections. Note that session-level features (prepared statements, `SET`, advisory locks) can behave differently through a pooler in transaction mode.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Borrowing a connection and not returning it on an error path. Each leak shrinks the pool by one until every request waits forever. Always release in a `finally` block, or use helpers that do it for you.
+</Callout>
+
+- **Holding a connection while doing slow non-database work** (calling another API, waiting on a user).
+- **Pool size times instances above the database limit**, which causes errors only at scale-out time.
+- **No acquisition timeout**, so requests queue indefinitely instead of failing fast.
+- **Transactions left open**, which pin a connection and can block vacuum.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+A small pool protects the database but makes requests queue during spikes, which shows up as latency. A large pool hides short spikes but can push the database into thrashing. You are choosing where the waiting happens: in your application's queue, where you can time out and shed load, or inside the database, where you cannot.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Export pool metrics (in use, idle, waiting) and alert on the waiting count, set a short acquire timeout, cap pool size per instance, and account for autoscaling in the total. Use a managed or external pooler when instance counts are large or short-lived (serverless functions especially).
+</Callout>
+
+## Check yourself
+
+<Exercise id="pool-why" kind="quiz" prompt="What is the main reason to use a connection pool?" options={["It encrypts queries", "It avoids the cost of opening a connection per request and bounds concurrent load on the database", "It makes queries return more rows", "It replaces indexes"]} answer={1} explain="Connections are expensive to create and limited in number. A pool reuses a bounded set and queues the excess instead of overwhelming the server." />
+
+<Exercise id="pool-predict-queue" kind="predict" prompt="A pool has max 2 connections. Six queries, each taking 100 ms, are started at the same time. Roughly when does the last one finish?" options={["About 100 ms", "About 200 ms", "About 300 ms", "About 600 ms"]} answer={2} explain="Two run at a time, so the six queries complete in three waves of 100 ms each. The pool bounded the concurrency to two." />
+
+<Exercise id="pool-leak" kind="debug" prompt="After some hours every request hangs waiting for a connection, although the database is idle. What is the likely bug?" options={["The database ran out of disk", "Connections are borrowed and never released on some code path", "The pool size is too big", "TLS expired"]} answer={1} explain="Leaked connections stay marked in use, so the pool slowly runs out and later requests wait forever. Release in a finally block and set an acquire timeout." />
+
+<Exercise id="pool-sizing" kind="scenario" prompt="Your database allows 100 connections. You plan 20 app instances, each with a pool of 10. What is the problem?" options={["None, 10 is small", "Together they can open 200 connections, above the limit", "Pools only work with one instance", "The instances will share one pool automatically"]} answer={1} explain="Total possible connections is instances times pool size. Reduce the per-instance pool or use an external pooler that multiplexes them." />

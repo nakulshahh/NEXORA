@@ -1,0 +1,94 @@
+---
+chapter: B8
+slug: keeping-search-in-sync
+title: "Keeping a search index in sync with the source of truth"
+order: 2
+summary: "A search index is a derived copy of your data. Keeping it correct means choosing how changes flow into it, accepting a short delay, and having a rebuild path for when it drifts."
+objectives:
+  - Treat the search index as derived data with Postgres as the source of truth
+  - Compare dual writes, a transactional outbox and periodic reindexing
+  - Explain eventual consistency from the user's side and design for it
+  - Describe an idempotent, rebuildable indexing pipeline
+concepts: [derived data, source of truth, dual write, outbox, reindex, eventual consistency, idempotent indexing, change data capture]
+reading:
+  - title: "Martin Kleppmann: Designing Data-Intensive Applications, chapter on derived data"
+    url: "https://dataintensive.net/"
+  - title: "microservices.io: Transactional outbox"
+    url: "https://microservices.io/patterns/data/transactional-outbox.html"
+misconceptions:
+  - belief: "Writing to the database and then to the search engine in the same request keeps them in sync."
+    correction: "Two separate writes cannot be made atomic. If the second fails or the process dies between them, the stores disagree, and nothing notices. This is the dual-write problem."
+  - belief: "Eventual consistency means the data might never be right."
+    correction: "It means the copies converge after a delay if the pipeline works. The design work is bounding the delay, detecting stuck pipelines and being able to rebuild."
+---
+
+## Why it exists
+
+Once search lives in its own engine, there are two copies of every searchable record. They will disagree: a deploy kills a worker, the engine is down for a minute, a bug skips one event type. A search that shows deleted items or misses new ones erodes trust quickly.
+
+<Callout kind="why">
+Derived data needs a one-way flow from the source of truth plus a way to regenerate it from scratch. If you can always rebuild, drift is an inconvenience, not a disaster.
+</Callout>
+
+## How it works
+
+### Three ways to feed the index
+
+1. **Dual write**: the request handler writes the database and then the search engine. Simple and wrong: a failure between the writes leaves them inconsistent with no record of what to repair.
+2. **Transactional outbox**: in the *same database transaction* as the change, insert an "index this record" row. A worker (B7) reads the outbox and updates the engine, retrying on failure. The change and the intent to index commit together or not at all.
+3. **Periodic or on-demand reindex**: a job rebuilds the index from the database. Slow for large data, but the ultimate safety net.
+
+Many systems combine 2 and 3: the outbox gives freshness, a nightly reindex corrects any drift. Larger systems use change data capture (reading the database's log, the same WAL from the first B-chapter) to feed indexes without application changes.
+
+### Idempotent indexing
+
+Indexing "upsert document id 42 with this content" is naturally idempotent: doing it twice is harmless, which fits at-least-once delivery. Deleting an already-deleted document must not fail. Include a version (an `updated_at` or a counter) so a late, older event cannot overwrite a newer one.
+
+```sql file=outbox.sql mark=3,4
+BEGIN;
+UPDATE products SET name = $1 WHERE id = $2;
+INSERT INTO search_outbox(entity, entity_id, op) VALUES ('product', $2, 'upsert');
+COMMIT;   -- both happen, or neither
+```
+
+### Living with a delay
+
+Seconds of lag are normal. Design the UI so it does not break: after a user creates an item, show it from the database response rather than expecting search to find it immediately; do not rely on search results for correctness (permissions must be enforced on the actual records, since an index can lag a revoked permission); and watch **lag** (age of the oldest unprocessed outbox row) as the health metric.
+
+### Rebuilding safely
+
+Reindex into a *new* index, then switch an alias or pointer to it once complete, so users never see a half-built index. Keep the old one briefly in case you need to roll back.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Trusting the search index for authorization. A document a user lost access to can remain searchable until the index catches up. Filter results against the source of truth, or include permission data and update it with priority.
+</Callout>
+
+- **Dual writes** with no repair job.
+- **No lag metric**, so a stalled worker goes unnoticed for days.
+- **Non-idempotent index updates**, so retries duplicate documents.
+- **Reindexing in place**, exposing partial results.
+- **Indexing sensitive fields** that should never be searchable.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+An outbox adds a table and a worker but gives reliable, retryable propagation. Dual writes are simpler until the first failure. Full reindexing is robust and slow; incremental updates are fast and need careful handling of ordering and deletes.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Alert on outbox age and on the count of failed index operations, run a scheduled reconciliation that compares counts or checksums between the database and the index, keep reindex runnable on demand, and test by killing the worker mid-stream.
+</Callout>
+
+## Check yourself
+
+<Exercise id="sync-dual" kind="debug" prompt="After a deploy, some new products never appear in search. The handler saves to the database and then calls the search engine. What is the likely cause?" options={["Search is too slow", "A failure or crash between the two writes left the index without the record (dual-write problem)", "The database lost the row", "GIN indexes expire"]} answer={1} explain="Two separate writes cannot be atomic. An outbox row inserted in the same transaction makes the intent durable and retryable." />
+
+<Exercise id="sync-outbox" kind="quiz" prompt="What is the key property of the transactional outbox?" options={["It makes the search engine faster", "The change and the instruction to index it commit in one database transaction", "It deletes old data", "It avoids needing workers"]} answer={1} explain="Because both rows commit together, a worker can always find and retry the pending index operation." />
+
+<Exercise id="sync-auth" kind="scenario" prompt="A user's access to a private document is revoked, but it still appears in their search results for a minute. How should authorization be handled?" options={["Ignore it", "Check permissions against the source of truth when returning results, not only in the index", "Reindex hourly", "Hide the search box"]} answer={1} explain="The index lags. Enforce access on the authoritative records or with promptly updated permission data." />
+
+<Exercise id="sync-rebuild" kind="predict" prompt="You rebuild the search index in place while users search. What may they see?" options={["Always complete results", "Missing or partial results during the rebuild", "Faster results", "An error page always"]} answer={1} explain="In-place rebuilds expose a half-built index. Build a new index and switch an alias when it is complete." />

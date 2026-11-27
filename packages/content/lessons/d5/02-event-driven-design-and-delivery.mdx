@@ -1,0 +1,90 @@
+---
+chapter: D5
+slug: event-driven-design-and-delivery
+title: "Event-driven design: commands, events and keeping consumers safe"
+order: 2
+summary: "Services can communicate by publishing facts (events) instead of calling each other. That decouples them and adds new failure modes: duplicates, reordering, schema changes and eventual consistency, each with a standard defence."
+objectives:
+  - Distinguish commands from events and say what each couples
+  - Design events as immutable facts with ids, versions and schemas
+  - Make consumers idempotent and tolerant of reordering and replays
+  - Use outbox, dead-letter queues and schema evolution rules
+concepts: [event, command, event-driven architecture, idempotent consumer, outbox, dead-letter queue, schema evolution, eventual consistency, saga, event sourcing]
+reading:
+  - title: "Martin Fowler: What do you mean by Event-Driven?"
+    url: "https://martinfowler.com/articles/201701-event-driven.html"
+  - title: "microservices.io: Saga pattern"
+    url: "https://microservices.io/patterns/data/saga.html"
+misconceptions:
+  - belief: "Events make services fully independent."
+    correction: "They remove call-time coupling but create coupling on the event schema and on behaviour. Changing an event's meaning breaks every consumer, so events need versioning and compatibility rules like any public API."
+  - belief: "With an event-driven design the system is consistent as soon as the event is published."
+    correction: "Consumers act later, so the system is eventually consistent. Users can briefly see inconsistent views, and flows that span services need compensation when a step fails."
+---
+
+## Why it exists
+
+When an order is placed, many things should happen: charge, reserve stock, email, update search, feed analytics. If the order service calls each one, it must know them all and fail when any is down. Publishing one fact, "OrderPlaced", lets each interested service react independently.
+
+<Callout kind="why">
+Events decouple who happened from who cares. The price is that you now design for delay, duplicates and change.
+</Callout>
+
+## How it works
+
+### Commands versus events
+
+A **command** asks a specific service to do something ("ReserveStock"); it can be rejected, and the sender cares about the result. An **event** states something that already happened ("OrderPlaced"); it cannot be rejected and the publisher does not know or care who listens. Name events in the past tense, make them **immutable facts**, and include the id of the entity, a unique event id, a timestamp and a schema version. Put enough in the event for consumers to act, or the id to look it up; avoid huge payloads and anything secret.
+
+### Publishing reliably
+
+Saving the order and publishing the event are two operations. Do not do a dual write (B8): use the **transactional outbox**. Insert the event into an outbox table in the same transaction as the order; a relay publishes rows to the broker and marks them sent, retrying on failure. Together with at-least-once delivery, consumers will see duplicates.
+
+### Safe consumers
+
+- **Idempotent**: record handled event ids (the unique-key technique from B7) so a replay changes nothing.
+- **Tolerant of reordering**: events for different keys can interleave and a retry can arrive late. Use versions or timestamps so an older "ProfileUpdated" cannot overwrite a newer one.
+- **Isolated failure**: after bounded retries with backoff, send a poison message to a **dead-letter queue** for inspection instead of blocking the partition.
+- **Replayable**: a consumer that can rebuild its state by replaying history is easy to fix after a bug (reset the offset and reprocess).
+
+### Schemas change
+
+Treat event schemas as contracts: add optional fields, never remove or repurpose fields, version breaking changes, and keep old and new consumers working during a rollout (the expand and contract idea again). A schema registry or contract tests catch violations before deploy.
+
+### Flows across services
+
+A business process spanning services (place order, charge, reserve, ship) cannot use one database transaction. A **saga** is a sequence of local transactions where each step publishes an event, and a failure triggers **compensating actions** (refund, release stock). Sagas are eventually consistent and need careful design of what the user sees in the meantime ("payment pending"). **Event sourcing** goes further and stores the events as the source of truth; it is powerful and heavy, and rarely the right starting point.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Publishing events that are really disguised commands ("SendEmailNow"), recreating tight coupling with extra steps. Publish facts; let consumers decide what to do.
+</Callout>
+
+- **Dual writes** instead of an outbox.
+- **Non-idempotent consumers.**
+- **Breaking schema changes** without versions.
+- **Assuming ordering** across keys.
+- **No visibility**: no lag metrics, no dead-letter monitoring, no way to trace one business flow across services (propagate a correlation id).
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Events give extensibility and resilience to a downstream outage, and cost debuggability (flow is implicit), eventual consistency and operational overhead. A plain function call or a database transaction is often simpler within one service; use events at real service boundaries.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Carry a correlation id through every event, monitor lag and dead-letter counts, document each event as an API with an owner, test consumers against recorded events, and rehearse a replay.
+</Callout>
+
+## Check yourself
+
+<Exercise id="evt-cmd" kind="quiz" prompt="Which is an event rather than a command?" options={["ReserveStock", "SendEmail", "OrderPlaced", "ChargeCard"]} answer={2} explain="Events are past-tense facts that already happened. Commands ask a specific service to do something." />
+
+<Exercise id="evt-dup" kind="scenario" prompt="A billing consumer sometimes charges a customer twice after a restart. What should it do?" options={["Never restart", "Record processed event ids in the same transaction as the charge and skip duplicates", "Charge faster", "Disable acknowledgements"]} answer={1} explain="At-least-once delivery means duplicates. An idempotency record committed with the effect makes redelivery harmless." />
+
+<Exercise id="evt-order" kind="predict" prompt="Two ProfileUpdated events for one user arrive out of order. Without version checks, what can happen?" options={["Nothing", "The older update overwrites the newer one", "The broker corrects it", "Both are dropped"]} answer={1} explain="Without a version or timestamp comparison, the last processed event wins even if it is older. Compare versions before applying." />
+
+<Exercise id="evt-schema" kind="debug" prompt="A producer renames a field in an event and several consumers start failing. What rule was broken?" options={["Use more partitions", "Event schemas are contracts: add fields compatibly, never remove or repurpose them without versioning", "Use shorter names", "Disable retries"]} answer={1} explain="Consumers depend on the schema. Compatible evolution and versioning protect them." />

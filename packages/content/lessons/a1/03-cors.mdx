@@ -1,0 +1,127 @@
+---
+chapter: A1
+slug: cors
+title: "CORS: why browsers police cross-origin calls"
+order: 3
+summary: "The same-origin policy protects users from hostile pages; CORS is the controlled opening in it. Learn what actually blocks the request, and what your server must send to allow it."
+objectives:
+  - Define an origin and decide whether two URLs are same-origin
+  - Explain the same-origin policy and the threat it prevents
+  - Distinguish a simple request from a preflighted one
+  - Configure the correct response headers, including the credentials rule
+concepts: [origin, same-origin policy, CORS, preflight, Access-Control-Allow-Origin, credentials, Vary]
+reading:
+  - title: "MDN: Cross-Origin Resource Sharing (CORS)"
+    url: "https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS"
+misconceptions:
+  - belief: "CORS is a server-side security feature that stops other people calling my API."
+    correction: "CORS is enforced by the browser to protect its user. curl, scripts and other servers ignore it completely, so it is never a substitute for authentication."
+  - belief: "A CORS error means the server rejected my request."
+    correction: "For simple requests the server often did run the handler. The browser only refuses to hand the response to the page."
+---
+
+## Why it exists
+
+Your browser holds your cookies for your bank. Imagine you also open `evil.example` in another tab. Its JavaScript could call `bank.example/transfer`, and the browser would attach your bank cookies automatically. Worse, it could *read* the answers.
+
+The **same-origin policy** prevents the reading part: a page may only read responses from its own **origin**, the triple of scheme, host and port. **CORS** (Cross-Origin Resource Sharing) is how a server says "this other origin is allowed to read my responses."
+
+<Callout kind="why">
+The browser cannot know which cross-origin reads are legitimate. Only the server can say so, and CORS is the protocol for saying it.
+</Callout>
+
+## How it works
+
+### What counts as the same origin
+
+`https://app.example.com` compared with:
+
+- `https://app.example.com/other` is same-origin (path does not matter).
+- `http://app.example.com` is different (scheme).
+- `https://api.example.com` is different (host).
+- `https://app.example.com:8443` is different (port).
+
+### Simple requests
+
+For basic requests (GET, HEAD, or POST with a form-like content type, no unusual headers) the browser **sends the request** with an `Origin` header and then looks at the answer:
+
+<Seq participants={["Browser (app.example.com)", "API (api.example.com)"]} messages={[
+  {"from":0,"to":1,"label":"GET /data, Origin: https://app.example.com"},
+  {"from":1,"to":0,"label":"200, Access-Control-Allow-Origin: https://app.example.com"}
+]} />
+
+If the allow header matches the page's origin, JavaScript may read the response. If not, the browser discards it and logs a CORS error. The request was still sent.
+
+### Preflighted requests
+
+If the request could have side effects the server never expected from a browser, such as a `PUT`, a custom header like `Authorization`, or `Content-Type: application/json`, the browser first asks permission with an `OPTIONS` request:
+
+<Seq participants={["Browser", "API"]} messages={[
+  {"from":0,"to":1,"label":"OPTIONS /items, Origin, Access-Control-Request-Method: PUT, -Headers: content-type"},
+  {"from":1,"to":0,"label":"204, Allow-Origin, Allow-Methods: PUT, Allow-Headers: content-type, Max-Age: 600"},
+  {"from":0,"to":1,"label":"PUT /items (the real request)"},
+  {"from":1,"to":0,"label":"200 + Access-Control-Allow-Origin"}
+]} />
+
+Only if the preflight answer permits the method and headers does the real request go out.
+
+### A correct handler
+
+```js file=cors.mjs mark=3,4,8,9
+import http from "node:http";
+
+const ALLOWED = new Set(["https://app.example.com"]);
+
+http.createServer((req, res) => {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED.has(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin); // echo one allowed origin
+    res.setHeader("Vary", "Origin"); // the answer depends on Origin: tell caches
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  }
+  if (req.method === "OPTIONS") {
+    res.setHeader("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE");
+    res.setHeader("Access-Control-Allow-Headers", "content-type, authorization");
+    res.setHeader("Access-Control-Max-Age", "600");
+    return res.writeHead(204).end();
+  }
+  res.writeHead(200, { "Content-Type": "application/json" }).end('{"ok":true}');
+}).listen(3000);
+```
+
+The credentials rule matters: when a request includes cookies, the server **cannot** answer `Access-Control-Allow-Origin: *`. It must name the exact origin.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Reflecting whatever `Origin` arrives (`Allow-Origin: <anything>`) together with `Allow-Credentials: true`. That authorises every website on earth to read your users' private data. Always check the origin against an allowlist.
+</Callout>
+
+- **Forgetting `Vary: Origin`**, so a shared cache serves one origin's allow header to another origin.
+- **Not handling `OPTIONS`.** Your router returns 404 or 405 to the preflight and the real call never happens.
+- **Treating CORS as access control.** Anyone can call your API directly. Authenticate and authorise on the server.
+- **Disabling it everywhere in dev and shipping that.** Use an explicit allowlist per environment.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+The easiest fix for CORS pain is to avoid it: serve the frontend and API from the same origin, or put them behind one reverse proxy. You lose independent deployment hostnames but gain simplicity, no preflights and safer cookies. A public, read-only API can safely use a wildcard origin without credentials.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Preflights add a round trip to many calls. Set a sensible `Access-Control-Max-Age` so browsers cache the permission, and watch for gateways or CDNs that strip or overwrite your CORS headers. Check the whole path, not only your app.
+</Callout>
+
+When debugging, open the browser's Network tab and look at the actual `OPTIONS` response headers. The console message tells you what failed; the headers tell you why.
+
+## Check yourself
+
+<Exercise id="same-origin" kind="quiz" prompt="Which URL is the SAME origin as https://shop.example.com/cart?" options={["http://shop.example.com/cart", "https://shop.example.com:8443/cart", "https://shop.example.com/checkout", "https://api.shop.example.com/cart"]} answer={2} explain="Origin is scheme + host + port. Only the path differs in https://shop.example.com/checkout." />
+
+<Exercise id="cors-not-security" kind="scenario" prompt="A teammate says: 'We do not need auth on this endpoint because CORS only allows our frontend.' What is the flaw?" options={["CORS is too slow", "CORS is enforced by browsers only, so curl or any server-side script can call the API freely", "CORS blocks our own frontend", "CORS requires HTTPS"]} answer={1} explain="Non-browser clients do not enforce CORS. It protects users of browsers, not your API." />
+
+<Exercise id="preflight-predict" kind="predict" prompt="A page at https://app.example.com sends fetch with method PUT and header Content-Type: application/json to https://api.example.com. What does the browser do first?" options={["Sends the PUT immediately", "Sends an OPTIONS preflight asking whether the method and headers are allowed", "Blocks the call without contacting the server", "Opens a WebSocket"]} answer={1} explain="PUT and a JSON content type make this a non-simple request, so the browser preflights with OPTIONS before sending the real request." />
+
+<Exercise id="creds-wildcard" kind="debug" prompt="Your API sends Access-Control-Allow-Origin: * and Access-Control-Allow-Credentials: true, and credentialed fetches from the browser fail. Why?" options={["Wildcard origins are forbidden when credentials are included; the server must echo a specific allowed origin", "Cookies cannot be used over HTTPS", "The Max-Age header is missing", "The server must use HTTP/2"]} answer={0} explain="Browsers reject the combination of * and credentials. Return the exact requesting origin from an allowlist and add Vary: Origin." />

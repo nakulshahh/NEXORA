@@ -1,0 +1,104 @@
+---
+chapter: E2
+slug: agents-tools-and-failure-handling
+title: "AI agents as backend workflows: loops, tools and failure handling"
+order: 1
+summary: "An agent is a loop in which a model chooses tools, the system executes them and feeds results back. From the backend's view it is a workflow engine with an unreliable planner, so it needs budgets, timeouts, retries, idempotency and logging."
+objectives:
+  - Describe the agent loop of model, tool call, execution and observation
+  - Show why the cost of a long loop grows faster than linearly
+  - Apply step budgets, timeouts, retries and validation to tool calls
+  - Decide when a fixed workflow is better than an agent
+concepts: [agent, tool calling, loop, step budget, observation, context window, idempotent tool, human-in-the-loop, workflow]
+reading:
+  - title: "Anthropic: Building effective agents"
+    url: "https://www.anthropic.com/engineering/building-effective-agents"
+  - title: "Anthropic docs: Tool use overview"
+    url: "https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview"
+misconceptions:
+  - belief: "An agent is just a smarter chatbot."
+    correction: "A chatbot returns text. An agent takes actions through tools with real side effects (sending email, changing records), so it inherits every backend concern: authorisation, idempotency, retries, timeouts and audit logs."
+  - belief: "More steps in the loop means a better answer."
+    correction: "Each step adds latency and cost, each tool call can fail, and each model decision can be wrong. Long loops accumulate errors; the right number of steps is the smallest that solves the task."
+---
+
+## Why it exists
+
+Some tasks cannot be a fixed sequence because the next step depends on what was found: researching, triaging a ticket, fixing a failing build. An agent lets a model decide the next step. The model is not the hard part for a backend engineer; the machinery around it is.
+
+<Callout kind="why">
+Treat the model as an unreliable component that proposes actions. Everything that makes other unreliable components safe (timeouts, validation, retries, limits, logs) applies unchanged.
+</Callout>
+
+## How it works
+
+**Verification status:** no model is called in this lesson's examples. They use a scripted stand-in for the model and a deliberately flaky tool, to show the *loop control* deterministically. They demonstrate backend behaviour, not model quality.
+
+### The loop
+
+1. Send the model the task, the available tools (name, description, JSON Schema for arguments) and the history so far.
+2. The model either answers or requests a tool call with arguments.
+3. **Your code** validates the arguments, checks authorisation, runs the tool with a timeout, and captures the result or error.
+4. Append the result to the history and repeat from 1, until the model answers or a limit is hit.
+
+The model never executes anything. Your service does, with the privileges you give it.
+
+### Failure handling
+
+Take a tool that times out twice before succeeding, and a loop with a step limit:
+
+```text file=agent.txt
+retries=0: tool error (timeout) try 1 -> gave up                    (task failed)
+retries=2: error, error, then tool ok -> final answer "The price is 42"  (2 steps)
+```
+
+Transient tool errors are ordinary; the loop needs a policy: retry with backoff for transient errors (B7), return the error text to the model for permanent ones so it can adapt, and stop after a limit. Always bound the loop: **maximum steps, maximum wall time and a maximum token or cost budget**. Without them a confused agent loops until your bill arrives.
+
+### Why long loops get expensive
+
+Each step resends the whole growing history. If the context starts at 500 tokens and grows 400 tokens per step, the tokens processed by the model are 500 after one step, 6 500 after five and 23 000 after ten: roughly quadratic in the number of steps. Keep tool outputs short (summarise or truncate), keep step counts low, and cache stable prefixes where the provider supports it.
+
+### Tools are API endpoints
+
+- **Validate arguments** against the schema; never pass model output to a shell, SQL or file path unchecked (the injection lessons apply: a prompt injected via a web page can make the model request harmful calls).
+- **Least privilege**: give each agent only the tools and data scope it needs, per user, enforced by your authorisation, not by the prompt.
+- **Idempotent or confirmable** side effects: an agent may call "send email" twice after a retry. Use idempotency keys, and require human approval for irreversible actions.
+- **Audit log** every call with the arguments, the result and who it ran for.
+
+### Agent or workflow?
+
+If you can write the steps down, write them as ordinary code (a workflow), optionally calling a model for one step such as classification. It is cheaper, faster, testable and predictable. Use an agent only where the path really is open-ended, and keep a human in the loop for consequential decisions.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Putting security rules in the prompt ("never delete records"). A prompt is a request, not enforcement. Enforce permissions in the tool layer.
+</Callout>
+
+- **No step, time or cost limit.**
+- **Returning huge tool outputs** that bloat the context.
+- **Non-idempotent tools** retried after timeouts.
+- **Trusting tool output** (a fetched web page) as instructions.
+- **No trace of what the agent did**, so incidents cannot be reconstructed.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Agents handle open-ended tasks and add latency, cost, nondeterminism and a larger attack surface. Workflows are predictable and cheap and cannot adapt. Many products use a workflow with an agent only for the genuinely open part.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Record every run as a trace (steps, tool calls, tokens, cost, outcome), alert on loop-limit hits and tool error rates, run offline evaluations on a fixed task set before changing prompts or tools, and keep a kill switch.
+</Callout>
+
+## Check yourself
+
+<Exercise id="agent-who" kind="quiz" prompt="Who actually executes a tool call requested by the model?" options={["The model", "Your service, which validates and runs it", "The browser", "The database"]} answer={1} explain="The model only proposes a call. Your code checks arguments and permissions and executes it." />
+
+<Exercise id="agent-limit" kind="scenario" prompt="An agent confuses itself and keeps calling tools. What safeguards stop a runaway bill?" options={["None needed", "Maximum steps, a wall-clock timeout and a token or cost budget", "More retries", "A longer prompt"]} answer={1} explain="Every loop needs hard limits on steps, time and cost enforced by your code." />
+
+<Exercise id="agent-cost" kind="predict" prompt="Context starts at 500 tokens and grows 400 per step. How does total tokens processed grow with steps?" options={["Linearly", "Roughly quadratically", "It stays constant", "Exponentially"]} answer={1} explain="Each step reprocesses the whole history, so total tokens grow about with the square of the step count." />
+
+<Exercise id="agent-inject" kind="debug" prompt="An agent summarises a web page that contains hidden text telling it to email the user's data to an attacker. What defence works?" options={["Stronger written instructions alone", "Least-privilege tools with enforced permissions and approval for side effects, treating fetched text as untrusted data", "Disabling logging", "Using a longer context"]} answer={1} explain="Prompts cannot enforce security. Restrict what tools can do and require confirmation for risky actions." />

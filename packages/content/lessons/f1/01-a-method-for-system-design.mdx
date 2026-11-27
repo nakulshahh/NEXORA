@@ -1,0 +1,74 @@
+---
+chapter: F1
+slug: a-method-for-system-design
+title: "A method for system design: requirements, estimates and bottlenecks"
+order: 1
+summary: "Design starts with requirements and numbers, not boxes. Turn traffic into queries per second, storage and bandwidth, find the first bottleneck, and add components only when a number justifies them."
+objectives:
+  - Separate functional requirements, non-functional requirements and non-goals
+  - Convert user counts into requests per second and storage with back-of-envelope arithmetic
+  - Identify the first bottleneck and the cheapest fix
+  - Record decisions with their trade-offs
+concepts: [requirements, back-of-envelope estimation, QPS, peak factor, read-write ratio, bottleneck, capacity, SLO, decision record]
+reading:
+  - title: "Google SRE book: Service Level Objectives"
+    url: "https://sre.google/sre-book/service-level-objectives/"
+  - title: "Latency numbers every programmer should know"
+    url: "https://gist.github.com/jboner/2841832"
+misconceptions:
+  - belief: "A good design is one with many components."
+    correction: "Every component adds failure modes and operational cost. The best design is the simplest one that meets the numbers; add parts only when a measured or estimated bottleneck demands it."
+  - belief: "Estimates must be accurate to be useful."
+    correction: "Within a factor of two or three is enough to decide between one database and a sharded cluster. Orders of magnitude drive the architecture."
+---
+
+## Why it exists
+
+Without requirements and numbers, design discussions become opinions about technology. A method keeps the conversation on constraints.
+
+<Callout kind="why">
+Most designs fail by solving the wrong problem or the wrong scale. Ten minutes of arithmetic prevents both.
+</Callout>
+
+## How it works
+
+1. **Requirements.** What must it do (functional)? How fast, available, durable, consistent (non-functional)? What is explicitly out of scope?
+2. **Estimate.** Daily users × actions per user ÷ 86 400 s = average requests per second; multiply by a peak factor (2–5×). Storage = records × size × retention. Bandwidth = QPS × payload.
+3. **Sketch the simplest design** (client, one service, one database) and **find the first bottleneck** against your numbers.
+4. **Fix that bottleneck cheaply** (index, cache, read replica, queue) and repeat.
+5. **Write down trade-offs and failure modes.**
+
+Worked: 10 million daily users, 5 actions each = 5×10⁷ per day ≈ 580 requests/s average, perhaps 2 000/s at peak. One tuned database handles that for reads from an index; the first bottleneck is more likely a hot query than raw volume.
+
+Keep the latency ladder in mind: memory reference ~100 ns, SSD read ~100 µs, same-datacentre round trip ~0.5 ms, cross-continent ~100+ ms (approximate, order of magnitude). A design that needs ten sequential cross-region calls cannot meet a 200 ms budget.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Starting with microservices, Kafka and Kubernetes before knowing the request rate.
+</Callout>
+
+- **Skipping non-functional requirements.**
+- **Ignoring peaks and skew** (hot keys, celebrity users).
+- **Designing only the happy path.**
+- **No stated assumptions**, so nobody can challenge the numbers.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Simple designs are cheap to run and may need rework at scale; scalable designs are costly early. Choose by the growth you can credibly predict.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Revisit estimates against real metrics after launch and keep short decision records so later engineers know why.
+</Callout>
+
+## Check yourself
+
+<Exercise id="sd-qps" kind="predict" prompt="86 400 000 requests per day is about how many per second on average?" options={["100", "1 000", "10 000", "86 400"]} answer={1} explain="86 400 000 / 86 400 = 1 000." />
+
+<Exercise id="sd-first" kind="scenario" prompt="At 600 requests/s of simple indexed reads, what is the right first move?" options={["Shard into 16 databases", "Confirm one database with an index suffices, then measure", "Adopt microservices", "Add Kafka"]} answer={1} explain="The numbers are small; add complexity only when a bottleneck appears." />
+
+<Exercise id="sd-peak" kind="quiz" prompt="Why multiply average load by a peak factor?" options={["To look busy", "Systems must survive bursts, not averages", "Averages are illegal", "Storage needs it"]} answer={1} explain="Capacity is set by the peak." />

@@ -1,0 +1,108 @@
+---
+chapter: C2
+slug: graceful-shutdown
+title: "Graceful shutdown: stopping without dropping requests"
+order: 1
+summary: "Every deploy stops old servers. A graceful shutdown stops accepting new work, finishes what is in flight, closes resources and exits within a deadline, so users never notice a deploy."
+objectives:
+  - Explain the sequence an orchestrator uses to stop a process
+  - Implement shutdown on SIGTERM that drains in-flight requests
+  - Coordinate readiness, load balancer removal and the shutdown deadline
+  - Handle long-lived connections and background jobs during shutdown
+concepts: [graceful shutdown, SIGTERM, drain, in-flight request, readiness probe, grace period, connection draining, keep-alive]
+reading:
+  - title: "Node.js docs: server.close()"
+    url: "https://nodejs.org/api/http.html#serverclosecallback"
+  - title: "Kubernetes docs: Pod termination"
+    url: "https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination"
+misconceptions:
+  - belief: "Calling server.close() immediately finishes all requests cleanly."
+    correction: "close() stops accepting new connections and waits for existing ones to end. Idle keep-alive connections can hold it open, and requests that never finish hold it open forever, so you need to close idle connections and enforce a deadline."
+  - belief: "If the load balancer sends traffic to the old server for a moment after the signal, that is the app's problem to prevent."
+    correction: "There is a race: the stop signal and the load balancer's removal of the server are not simultaneous. Mark the server not-ready, wait a short delay, then stop accepting, so in-flight and late-arriving requests are still served."
+---
+
+## Why it exists
+
+You deploy several times a day. Each deploy replaces running servers, and each old server may be in the middle of requests. Killing it drops those requests as errors the user sees. A graceful shutdown makes deploys, scale-downs and restarts invisible.
+
+<Callout kind="why">
+Zero-downtime deploys are not a feature of the platform alone. The platform asks nicely; your process has to listen.
+</Callout>
+
+## How it works
+
+### The sequence
+
+An orchestrator or process manager typically does this: (1) remove the instance from the load balancer (it stops being "ready"), (2) send SIGTERM, (3) wait up to a **grace period** (often 10 to 30 seconds), (4) send SIGKILL if the process is still running. Your job is to use the time between SIGTERM and SIGKILL well.
+
+On a test server that takes 1.5 seconds per request, with SIGTERM sent 0.4 seconds into a request:
+
+```text file=shutdown.txt
+default (no handler):  connection dropped, curl exit 52, empty reply
+with handler:          curl got 200 "done", then the process exited
+```
+
+### A minimal handler
+
+```ts file=shutdown.ts mark=2,3,4,7,8
+const server = app.listen(port);
+let shuttingDown = false;
+process.on("SIGTERM", async () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  setTimeout(() => process.exit(1), 25_000).unref();   // hard deadline
+  server.close(async () => {           // resolves when connections have ended
+    await pool.end();                  // close the database pool
+    process.exit(0);
+  });
+  server.closeIdleConnections();       // do not wait on idle keep-alive sockets
+});
+```
+
+The order matters: stop accepting new connections, let in-flight requests finish, close idle keep-alive connections (otherwise `close()` can wait on them), then close resources such as database pools and queue connections, and finally exit with code 0. The timer is a safety net so a stuck request cannot block the deploy forever; set it a little below the platform's grace period.
+
+### Readiness and the race
+
+The load balancer may keep sending requests for a moment after SIGTERM arrives. Handle it by making the readiness endpoint start failing immediately when shutdown begins, then waiting a short delay (a few seconds, matching the balancer's check interval) before closing the listener, so late requests are still served. A `preStop` sleep in Kubernetes serves the same purpose.
+
+### Everything else that runs
+
+- **Background workers**: stop claiming new jobs, finish or release the current one (B7: an unfinished claim returns to the queue by design), then exit.
+- **WebSockets and long-lived streams**: send a close message so clients reconnect to another instance; reconnecting is part of the protocol.
+- **In-memory buffers** (batched metrics, logs): flush before exit.
+- **Timers and intervals**: clear them, or the event loop stays alive.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Handling SIGINT (Ctrl+C) in development but not SIGTERM, which is the signal production tools actually send.
+</Callout>
+
+- **Shell wrapper as PID 1** that never forwards SIGTERM (see the signals lesson).
+- **Closing the database pool first**, so in-flight requests fail on their next query.
+- **No deadline**, so a hung request blocks the deploy.
+- **Idle keep-alive connections** keeping `close()` pending.
+- **Exiting with code 0 after a forced timeout**, hiding that shutdown was not clean.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+A longer grace period protects slow requests and slows every deploy. A shorter one speeds deploys and risks cutting work off. Choose it from the real distribution of request and job durations (the p99.9), not a default.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Test it: run a load generator during a deploy and verify no errors, log the start and end of shutdown with the number of in-flight requests, alert on exits with code 137 (killed after the grace period), and keep grace periods consistent between your app, the container runtime and the load balancer.
+</Callout>
+
+## Check yourself
+
+<Exercise id="gs-order" kind="quiz" prompt="Which order is right for a graceful shutdown?" options={["Close the database pool, then stop accepting requests", "Stop accepting new requests, finish in-flight ones, close resources, exit", "Exit immediately, then finish requests", "Restart the load balancer"]} answer={1} explain="Closing resources first would break requests still being served. Drain, then close, then exit." />
+
+<Exercise id="gs-idle" kind="debug" prompt="After SIGTERM your server's close() callback never fires although no requests are active. What is a likely cause?" options={["The port is closed", "Idle keep-alive connections are still open and keep the server alive", "Node is too old to exit", "The event loop is empty"]} answer={1} explain="Idle keep-alive sockets keep the server from finishing close(). Close idle connections explicitly and enforce a deadline." />
+
+<Exercise id="gs-race" kind="scenario" prompt="Right after a deploy starts, a few users get connection errors although the app handles SIGTERM. What is likely happening?" options={["The users' browsers failed", "The load balancer still sent requests to the instance after it stopped accepting connections", "The database was full", "TLS expired"]} answer={1} explain="Removal from the balancer and the stop signal race each other. Fail readiness first and pause briefly before closing the listener." />
+
+<Exercise id="gs-worker" kind="quiz" prompt="What should a background worker do on SIGTERM?" options={["Claim as many jobs as possible", "Stop claiming new jobs, finish or release the current one, then exit", "Ignore the signal", "Delete the queue"]} answer={1} explain="Stop taking new work and leave the queue consistent. An unfinished claim returns to the queue and another worker takes it." />

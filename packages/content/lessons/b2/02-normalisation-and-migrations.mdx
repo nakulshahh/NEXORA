@@ -1,0 +1,107 @@
+---
+chapter: B2
+slug: normalisation-and-migrations
+title: "Normalisation and safe schema migrations"
+order: 2
+summary: "Normalising stores each fact once so updates cannot contradict each other. Schemas change over time, so migrations must be versioned, repeatable and safe to run while traffic continues."
+objectives:
+  - Spot update, insert and delete anomalies in a denormalised table
+  - Normalise a table by moving repeated facts into their own table
+  - Explain why migrations are versioned files and never edited after release
+  - Apply the expand and contract pattern to rename a column without downtime
+concepts: [normalisation, denormalisation, anomaly, migration, expand and contract, backfill, lock, rollback]
+reading:
+  - title: "PostgreSQL docs: ALTER TABLE"
+    url: "https://www.postgresql.org/docs/current/sql-altertable.html"
+  - title: "Drizzle Kit: Migrations"
+    url: "https://orm.drizzle.team/docs/kit-overview"
+misconceptions:
+  - belief: "Denormalised tables are always faster, so normalising is academic."
+    correction: "Repeating data does save a join, but it creates copies that can disagree. Start normalised, measure, and denormalise one specific, measured hot path while keeping a rule for keeping the copies in sync."
+  - belief: "A migration is just a script you run by hand when you deploy."
+    correction: "Migrations are ordered, versioned files recorded in the database so every environment ends in the same state. Editing one that has already run somewhere makes environments drift apart."
+---
+
+## Why it exists
+
+Imagine an `orders` table that stores the customer's name and city in every row. Rename the customer and you must change every order; miss one and the data contradicts itself. **Normalisation** is the discipline of storing each fact in exactly one place.
+
+<Callout kind="why">
+Normal forms are not exam trivia. They are a checklist for removing the three bugs that repeated data causes: update, insert and delete anomalies.
+</Callout>
+
+## How it works
+
+### Anomalies
+
+Consider one wide table `orders(order_id, customer_name, customer_city, item, price)`:
+
+- **Update anomaly**: the customer moves, and you update three of their five rows. The table now claims two cities.
+- **Insert anomaly**: you cannot record a customer until they place an order.
+- **Delete anomaly**: deleting their only order also deletes everything you knew about them.
+
+### The fix
+
+Move each repeated fact to the table that owns it and refer to it by key, as in the previous lesson: `customers(id, name, city)` and `orders(id, customer_id, item, price)`. In practice, aim for these rules: every column depends on the key, the whole key and nothing but the key (roughly third normal form). The cost is a join to put the pieces back together.
+
+Denormalise deliberately and late. A stored `order_count` on the customer, or a copy of a price at the time of sale, can be right, but each one needs a clear owner and an update rule. A price captured on an order is not a copy in the bad sense; it is a historical fact that must not change when the product's price does.
+
+### Migrations
+
+Schemas evolve. A **migration** is a numbered file of SQL (or generated SQL) applied in order, with the applied versions recorded in a table so each runs once:
+
+```text file=migrations.txt
+0001_create_users.sql
+0002_add_orders.sql
+0003_orders_add_status.sql
+```
+
+Rules that keep teams out of trouble:
+
+1. Never edit a migration that has run anywhere shared. Add a new one.
+2. Run them automatically and the same way in every environment.
+3. Keep them small, and know which statements take locks. Adding a column with a constant default is cheap in modern PostgreSQL, but changing a column's type or adding a constraint can rewrite or scan the table while blocking writes.
+
+### Expand and contract
+
+To rename `users.fullname` to `users.name` without downtime, do not rename in one step, because old and new application versions run side by side during a deploy.
+
+1. **Expand**: add `name` (nullable). Deploy code that writes both columns.
+2. **Backfill**: copy existing values in small batches.
+3. **Switch**: deploy code that reads `name`.
+4. **Contract**: after nothing uses `fullname`, drop it in a later migration.
+
+Every step is safe to run, safe to roll back, and compatible with the previous app version.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Renaming or dropping a column in the same release that stops using it. During the rollout the old version still queries it and starts failing.
+</Callout>
+
+- **Editing history**: changing an old migration instead of adding a new one.
+- **A huge backfill in one transaction**, which holds locks and bloats the table. Batch it.
+- **Adding `NOT NULL` or a foreign key to a big table without checking the locking behaviour** first.
+- **No way back**: shipping a destructive migration without a tested restore.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Normalised schemas protect correctness and make writes simple but need joins on reads. Denormalised ones read faster but push consistency work onto your code. Expand and contract trades speed for safety: a simple change becomes three or four deploys.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Run migrations as a separate, observable step before or during deploy, test them on a copy of production-sized data, set a lock timeout so a blocked migration fails instead of freezing traffic, and take a backup before destructive changes.
+</Callout>
+
+## Check yourself
+
+<Exercise id="norm-anomaly" kind="quiz" prompt="A customer's city is stored in every one of their order rows, and you update only some of them. What is this called?" options={["An insert anomaly", "An update anomaly", "A delete anomaly", "A deadlock"]} answer={1} explain="Repeated data means one fact must be changed in many places. Missing one leaves contradictory values, which is an update anomaly." />
+
+<Exercise id="mig-edit" kind="scenario" prompt="Migration 0003 already ran in staging and production, and you notice a typo in it. What should you do?" options={["Edit 0003 and redeploy", "Add a new migration 0004 that corrects it", "Delete the migrations table", "Rename 0003 to 0002"]} answer={1} explain="Environments that already applied 0003 will never rerun it, so editing it makes them differ. A new migration moves everyone forward the same way." />
+
+<Exercise id="mig-rename" kind="predict" prompt="You rename a column in one migration and deploy new code in the same release. During the rolling deploy, old app instances still run. What happens?" options={["Nothing, instances switch instantly", "Old instances query the missing column and fail until they are replaced", "The database restores the old name", "New instances fail only"]} answer={1} explain="Old and new versions overlap during a rollout, so a schema change must work for both. That is why renames use expand and contract." />
+
+<Exercise id="mig-order" kind="debug" prompt="A team backfills 50 million rows with one UPDATE statement in a single transaction and the site slows to a crawl. What is the better approach?" options={["Run it at peak time", "Backfill in small batches, committing between them", "Disable the WAL", "Drop the table"]} answer={1} explain="A giant transaction holds locks, creates many dead row versions and a huge log. Small batches keep each transaction short and the system responsive." />

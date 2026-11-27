@@ -1,0 +1,89 @@
+---
+chapter: F0
+slug: why-distributed-systems-are-hard
+title: "Why distributed systems are hard: partial failure, time and quorums"
+order: 1
+summary: "Once state lives on several machines, calls can fail without telling you whether they happened, clocks disagree, and replicas diverge. Quorums and logical clocks are the basic tools for reasoning about it."
+objectives:
+  - Explain partial failure and why a timeout is ambiguous
+  - Use quorum overlap (R + W > N) to reason about read freshness
+  - Compare vector clocks to detect concurrent updates
+  - Describe the trade-off CAP and PACELC point at
+concepts: [partial failure, timeout ambiguity, quorum, vector clock, eventual consistency, CAP, PACELC, replication, consensus]
+reading:
+  - title: "Designing Data-Intensive Applications, chapters 8 and 9"
+    url: "https://dataintensive.net/"
+  - title: "Lamport: Time, Clocks, and the Ordering of Events"
+    url: "https://lamport.azurewebsites.net/pubs/time-clocks.pdf"
+misconceptions:
+  - belief: "If a request times out, it did not happen."
+    correction: "A timeout only means no answer arrived in time. The server may have processed it, or not. That ambiguity is why writes need idempotency keys and why retries must be safe."
+  - belief: "Clocks on different machines can order events."
+    correction: "Clocks drift and jump. Wall-clock timestamps from two machines cannot reliably say which event came first; use logical clocks, version numbers or a single ordering point."
+---
+
+## Why it exists
+
+A single process either works or crashes. A system of several machines can be half working: one node slow, a link dropped, a reply lost. Every later design chapter is a response to that.
+
+<Callout kind="why">
+Distribution is chosen for capacity or availability, and it costs you certainty. Know what you pay.
+</Callout>
+
+## How it works
+
+### Partial failure and the ambiguous timeout
+
+A client sends a payment request and the connection times out. Three worlds look identical: the request never arrived, it arrived and failed, or it succeeded and the reply was lost. You cannot tell from the client. So: make operations **idempotent** (B7), carry a key, and let the client retry safely.
+
+### Quorums
+
+With N replicas, a write waits for W acknowledgements and a read asks R replicas. If **R + W > N**, every read set overlaps every write set in at least one replica, so a read sees the latest acknowledged write (assuming a way to pick the newest). Checked by enumeration:
+
+```text file=quorum.txt
+N=3 W=2 R=2  overlap guaranteed
+N=5 W=3 R=3  overlap guaranteed
+N=3 W=1 R=1  no overlap (stale reads possible)
+N=5 W=2 R=2  no overlap
+```
+
+Lower W or R gives lower latency and more availability, at the price of staleness.
+
+### Logical time
+
+Vector clocks keep one counter per node. Compare two: if every entry of A is ≤ B's and one is smaller, A happened **before** B; if each is ahead somewhere, they are **concurrent** (a conflict to resolve). Computed: `{A:2,B:1}` vs `{A:1,B:3}` are concurrent; `{A:1}` vs `{A:2,B:1}` is before.
+
+### Consistency and the trade-off
+
+During a network partition a system must choose: refuse some requests (consistency) or answer from possibly stale data (availability). That is CAP. PACELC adds that even without partitions you trade latency against consistency. **Consensus** protocols (Raft, Paxos) make a group agree on one order of operations, at the cost of coordination latency and needing a majority alive.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Using wall-clock timestamps to resolve conflicting writes ("last write wins"). With skewed clocks the older write can win and data is silently lost.
+</Callout>
+
+- **Assuming the network is reliable** or that latency is bounded.
+- **Retrying non-idempotent operations.**
+- **Treating "eventually consistent" as "correct soon" without defining conflicts.**
+- **Distributing before a single node is exhausted.**
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Strong consistency is simple to reason about and costs latency and availability. Weak consistency scales and pushes conflict handling onto the application.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Test failure, not success: kill nodes, delay and drop packets, and verify invariants afterwards. Measure replication lag and alert on it.
+</Callout>
+
+## Check yourself
+
+<Exercise id="ds-timeout" kind="quiz" prompt="A write request times out. What can you conclude?" options={["It failed", "It succeeded", "Nothing; it may or may not have been applied", "The server crashed"]} answer={2} explain="A timeout is the absence of an answer, not a result." />
+
+<Exercise id="ds-quorum" kind="predict" prompt="N=5, W=2, R=3. Is a read guaranteed to overlap the latest write set?" options={["Yes, since R+W equals N", "No, R+W must exceed N", "Yes always", "Only with vector clocks"]} answer={1} explain="2 + 3 = 5 is not greater than 5, so a read set can miss the write set." />
+
+<Exercise id="ds-vc" kind="scenario" prompt="Vector clocks A2 B1 and A1 B3 are compared. What is their relation?" options={["First before second", "Second before first", "Concurrent, needing conflict resolution", "Equal"]} answer={2} explain="Each is ahead in one entry, so neither happened before the other." />

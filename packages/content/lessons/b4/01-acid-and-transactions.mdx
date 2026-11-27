@@ -1,0 +1,113 @@
+---
+chapter: B4
+slug: acid-and-transactions
+title: "Transactions and ACID"
+order: 1
+summary: "A transaction groups several statements into one all-or-nothing unit. ACID names the guarantees: atomicity, consistency, isolation and durability, and each is implemented by a mechanism you can point to."
+objectives:
+  - State what each letter of ACID guarantees
+  - Use BEGIN, COMMIT and ROLLBACK to make a multi-step change atomic
+  - Link durability to the write-ahead log and isolation to MVCC
+  - Keep transactions short and never hold them across slow external calls
+concepts: [transaction, atomicity, consistency, isolation, durability, commit, rollback, savepoint, deadlock]
+reading:
+  - title: "PostgreSQL docs: Transactions tutorial"
+    url: "https://www.postgresql.org/docs/current/tutorial-transactions.html"
+  - title: "PostgreSQL docs: Explicit locking"
+    url: "https://www.postgresql.org/docs/current/explicit-locking.html"
+misconceptions:
+  - belief: "A single SQL statement is not safe without an explicit transaction."
+    correction: "Every statement runs in its own implicit transaction and is atomic by itself. You need an explicit transaction only to make several statements succeed or fail together."
+  - belief: "If my code catches the error, the transaction is fine to continue."
+    correction: "In PostgreSQL an error aborts the transaction; later statements fail until you roll back (or roll back to a savepoint). Catching the error in code does not undo the failed state."
+---
+
+## Why it exists
+
+Moving money means two writes: subtract from one account, add to another. If the process dies between them, money vanishes. A **transaction** makes the pair indivisible: either both happen or neither does. The same idea protects any multi-step change, such as creating an order and decrementing stock.
+
+<Callout kind="why">
+ACID is a contract between you and the database: you describe the unit of work, and it promises the unit is never half-applied, even with crashes and concurrent users.
+</Callout>
+
+## How it works
+
+```sql file=transfer.sql mark=1,2,3,4
+BEGIN;
+UPDATE acct SET bal = bal - 30 WHERE id = 1;
+UPDATE acct SET bal = bal + 30 WHERE id = 2;
+COMMIT;      -- or ROLLBACK; to undo both
+```
+
+The four guarantees:
+
+- **Atomicity**: all statements apply, or none do. On error or `ROLLBACK`, the new row versions are simply never made visible.
+- **Consistency**: a committed transaction leaves the database satisfying its constraints (keys, `CHECK`, foreign keys). The database enforces the declared rules; your *business* rules are consistent only if you declare them.
+- **Isolation**: concurrent transactions do not see each other's half-finished work. How strongly is configurable; the next lesson covers the levels and what each allows.
+- **Durability**: once `COMMIT` returns, the change survives a crash, because the log record was flushed first, as in the pages and WAL lesson.
+
+### Mapping to mechanisms
+
+| Guarantee | Mostly implemented by |
+| --- | --- |
+| Atomicity | Row versioning, so uncommitted versions stay invisible |
+| Consistency | Constraints checked at write or commit time |
+| Isolation | MVCC snapshots plus locks |
+| Durability | Write-ahead log flushed at commit |
+
+### In application code
+
+```ts file=transfer.ts mark=2,4,8,9
+const client = await pool.connect();
+try {
+  await client.query("BEGIN");
+  await client.query("UPDATE acct SET bal = bal - $1 WHERE id = $2", [amount, from]);
+  await client.query("UPDATE acct SET bal = bal + $1 WHERE id = $2", [amount, to]);
+  await client.query("COMMIT");
+} catch (e) {
+  await client.query("ROLLBACK");
+  throw e;
+} finally {
+  client.release();
+}
+```
+
+All statements must use the *same* connection, since a transaction belongs to one session. That is why you borrow one client from the pool rather than calling `pool.query` for each statement.
+
+### Savepoints and deadlocks
+
+A **savepoint** lets you undo part of a transaction without abandoning it. A **deadlock** happens when two transactions each wait for a lock the other holds; PostgreSQL detects it and aborts one with an error. The standard defence is to always touch rows in the same order (for example, lowest account id first).
+
+## Common mistakes
+
+<Callout kind="mistake">
+Calling `pool.query` for each statement of a "transaction". Each call may use a different connection, so there is no transaction at all, and the BEGIN and COMMIT land on different sessions.
+</Callout>
+
+- **Doing slow work inside a transaction** (HTTP calls, user input), which holds locks and a connection.
+- **Never releasing the client** after an error path.
+- **Ignoring the abort state** after a failed statement.
+- **Retrying a non-idempotent side effect** (an email, a payment call) inside a transaction that can be re-run.
+- **Assuming consistency** without declaring the constraints that define it.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Longer transactions give wider guarantees but hold locks longer, reduce concurrency and bloat versions. Shorter transactions are faster and gentler but force you to design for partial progress. Keep the transaction as small as correctness allows, and make external side effects happen after commit.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Set statement and idle-in-transaction timeouts, log and alert on deadlocks and serialization failures, and retry the whole transaction (not just the failed statement) when the database reports a retryable conflict. Keep outbound calls outside the transaction, using patterns such as an outbox table.
+</Callout>
+
+## Check yourself
+
+<Exercise id="acid-atomic" kind="quiz" prompt="A transfer subtracts from account A, then the server crashes before adding to account B. With a transaction, what is the state after recovery?" options={["A is lower, B unchanged", "Neither account changed", "B is higher, A unchanged", "Undefined"]} answer={1} explain="The transaction never committed, so none of its changes become visible. That is atomicity." />
+
+<Exercise id="acid-durable" kind="quiz" prompt="Which mechanism lets a committed transaction survive a crash?" options={["The query planner", "The write-ahead log flushed at commit", "Index scans", "Connection pooling"]} answer={1} explain="Commit returns after the log record is durable. Recovery replays it, so the change is not lost." />
+
+<Exercise id="acid-pool-bug" kind="debug" prompt="Code runs await pool.query('BEGIN'), then two updates with pool.query, then pool.query('COMMIT'). Rollback never restores anything. Why?" options={["pool.query is too slow", "Each call may use a different connection, so the statements are not in one transaction", "COMMIT is optional", "The pool is too big"]} answer={1} explain="A transaction lives on one session. You must check out a single client and run every statement on it." />
+
+<Exercise id="acid-external" kind="scenario" prompt="Inside a transaction you call a payment API, then update the order. The API takes 3 seconds. What goes wrong at scale?" options={["Nothing", "Locks and a connection are held for seconds, and if the transaction fails after the charge you cannot roll the charge back", "The database rewrites the API", "Transactions forbid HTTP"]} answer={1} explain="Slow external calls inside a transaction hold resources and cannot be rolled back. Commit first and perform the side effect afterwards, ideally with an outbox." />

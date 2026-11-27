@@ -1,0 +1,102 @@
+---
+chapter: B3
+slug: btree-indexes
+title: "B-tree indexes: from a full scan to a handful of page reads"
+order: 1
+summary: "A B-tree index is a sorted, shallow tree that finds a value in a few page reads instead of scanning the whole table. It costs space and write time, and only helps when queries can use it."
+objectives:
+  - Explain why a sequential scan is O(pages) and a B-tree lookup is O(log n)
+  - Measure the effect of an index and read its size against the table
+  - Say when an index does not help, including leading wildcards and low selectivity
+  - Use composite indexes to serve both a filter and an ordering
+concepts: [B-tree, index scan, sequential scan, selectivity, composite index, expression index, index size, write amplification]
+reading:
+  - title: "PostgreSQL docs: Indexes"
+    url: "https://www.postgresql.org/docs/current/indexes.html"
+  - title: "Use The Index, Luke"
+    url: "https://use-the-index-luke.com/"
+misconceptions:
+  - belief: "Adding an index to every column makes everything fast."
+    correction: "Each index must be updated on every insert and delete, takes space, and is useless for queries that cannot use it. Index the access patterns you actually run, and verify with EXPLAIN."
+  - belief: "If a column has an index, queries on that column always use it."
+    correction: "The planner picks the cheapest plan. A pattern like LIKE '%x%', a function applied to the column, or a filter that matches a large share of the rows will not use a plain B-tree index efficiently."
+---
+
+## Why it exists
+
+Without an index, finding one user among a million means reading every page of the table and checking each row. That is the cost the pages lesson warned about. An index trades extra storage for a way to jump straight to the answer.
+
+<Callout kind="why">
+For a competitive programmer: a B-tree index is a sorted structure with a huge fan-out. It is a balanced search tree designed so each node is one disk page, which makes the tree about three or four levels deep even for millions of rows.
+</Callout>
+
+## How it works
+
+A **B-tree** keeps keys in sorted order inside pages. Each internal page holds hundreds of keys and pointers to child pages, so the tree is very shallow, and leaf pages point to the table rows. A lookup reads one page per level, so it costs O(log n) *page reads* with a large base, not O(n). Because leaves are sorted and linked, it also supports range queries, `ORDER BY` and prefix matches.
+
+### Measured on one million users
+
+The `users` table had one million rows, 22 213 pages, 174 MB. Looking up one email:
+
+```sql file=lookup.sql mark=1,2
+EXPLAIN (ANALYZE, COSTS OFF)
+SELECT * FROM users WHERE email = 'user500000@example.com';
+```
+
+| Plan | Execution time |
+| --- | --- |
+| Sequential scan (1 000 000 rows filtered out) | about 98 ms |
+| B-tree index scan | about 0.2 ms |
+
+That is roughly 500 times faster on this machine, and the gap grows with the table. The price: the email index was **39 MB** on disk, about a fifth of the table, and every insert, update of that column and delete must now maintain it too. Numbers are from one run on a laptop-class sandbox; the ratio is the lesson, not the milliseconds.
+
+### When the index cannot help
+
+```sql file=noindex.sql mark=1,3
+-- leading wildcard: no sorted prefix to seek to
+SELECT * FROM users WHERE email LIKE '%500000%';   -- parallel seq scan, ~69 ms
+-- anchored prefix, with a pattern-ops index: fast
+SELECT * FROM users WHERE email LIKE 'user50000%'; -- index scan, ~0.1 ms, 11 rows
+```
+
+A function on the column (`WHERE lower(email) = ...`) cannot use an index on `email`; create an **expression index** on `lower(email)` instead (the lab had one, and the same lookup took about 0.1 ms).
+
+**Selectivity** matters too. `WHERE country = 'IN'` matched 200 001 of a million rows. Even with an index on country, the planner used a bitmap scan that still visited all 22 213 table pages and took about 123 ms. When a query returns a big fraction of the table, reading the whole thing in order is as good or better. Indexes pay off when they let you skip most of the data.
+
+### Composite indexes
+
+An index on `(country, created_at)` is sorted by country first, then by time within each country. It serves `WHERE country = 'IN' ORDER BY created_at DESC LIMIT 10` by seeking to the country and walking backwards ten entries: about 0.03 ms in the lab, with no sort step. Column order matters: it helps filters on the leftmost columns, not the second column alone.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Creating an index and not checking that the query uses it. Always look at the plan; wrong column order, a function on the column or a type mismatch silently disables it.
+</Callout>
+
+- **Indexing every column** and paying for it on every write.
+- **Wrong order in a composite index** so the leading column is never filtered.
+- **Indexing low-cardinality columns alone** (a boolean, a status with three values).
+- **Forgetting foreign-key columns**, so joins and cascading deletes scan the child table.
+- **Creating indexes on a busy production table without `CONCURRENTLY`**, which blocks writes.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Reads get faster; writes get slower and storage grows. Each extra index adds work to every insert and to updates of its columns, and may block some optimisations. The right number of indexes is the smallest set that serves your measured queries.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Use `CREATE INDEX CONCURRENTLY` on live tables, review unused indexes in the statistics views and drop them, and track slow queries with their plans. Re-check plans as data grows, because the best plan for a small table is often different from the best plan for a large one.
+</Callout>
+
+## Check yourself
+
+<Exercise id="idx-why-fast" kind="quiz" prompt="Why is a B-tree lookup on a million rows only a few page reads?" options={["The table is cached in the browser", "Each node is a page with hundreds of keys, so the tree is very shallow", "It scans in parallel", "It stores the answer in the WAL"]} answer={1} explain="High fan-out means few levels. Each level costs one page read, so the cost is logarithmic with a large base." />
+
+<Exercise id="idx-wildcard" kind="predict" prompt="There is a B-tree index on email. Which query can use it efficiently?" options={["WHERE email LIKE '%gmail.com'", "WHERE email = 'a@x.com'", "WHERE length(email) = 10", "WHERE email NOT LIKE 'a%'"]} answer={1} explain="Equality lets the index seek directly. A leading wildcard, a function on the column or a negation does not give a sorted range to seek to." />
+
+<Exercise id="idx-selectivity" kind="scenario" prompt="A query filters on country = 'IN' and 20 percent of all rows match. What is likely to happen even if country is indexed?" options={["Always an instant index lookup", "The planner reads a large share of the table anyway, so the index barely helps", "The query fails", "The table shrinks"]} answer={1} explain="Returning a big fraction of rows means visiting most pages regardless. Indexes shine when they let you skip most of the data." />
+
+<Exercise id="idx-composite" kind="quiz" prompt="You have an index on (country, created_at). Which filter alone benefits most?" options={["created_at only", "country only", "Neither", "Both equally"]} answer={1} explain="A composite index is sorted by its leftmost column first. Filtering on country alone can seek into it; created_at alone cannot." />

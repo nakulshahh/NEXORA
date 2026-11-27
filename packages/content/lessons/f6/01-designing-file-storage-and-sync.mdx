@@ -1,0 +1,86 @@
+---
+chapter: F6
+slug: designing-file-storage-and-sync
+title: "Design: file storage and sync"
+order: 1
+summary: "Store large files by splitting them into chunks, deduplicate by content hash, and sync only what changed. Content-defined chunking survives inserts that defeat fixed-size chunks, as measured."
+objectives:
+  - Split files into chunks and store them by content hash
+  - Compare fixed-size and content-defined chunking
+  - Separate metadata from blob storage
+  - Describe resumable upload and conflict handling
+concepts: [chunking, content hash, deduplication, content-defined chunking, metadata, object storage, resumable upload, sync, conflict, presigned URL]
+reading:
+  - title: "Dropbox: Streaming File Synchronization"
+    url: "https://dropbox.tech/infrastructure/streaming-file-synchronization"
+  - title: "Amazon S3: Presigned URLs"
+    url: "https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html"
+misconceptions:
+  - belief: "Syncing a changed file means uploading the whole file."
+    correction: "Split into chunks and upload only chunks the server lacks. A small edit then costs a small upload."
+  - belief: "Fixed 8 KB chunks are enough for dedup."
+    correction: "Inserting a few bytes at the front shifts every boundary. Measured: after a 10-byte insert, fixed chunks reused 0 of 49 while content-defined chunks reused 136 of 137."
+---
+
+## Why it exists
+
+Files are big, uploads fail, and users edit them repeatedly. Treating a file as a list of chunks makes uploads resumable and syncs cheap.
+
+<Callout kind="why">
+It shows why metadata and bytes are stored separately and how hashing gives deduplication for free.
+</Callout>
+
+## How it works
+
+### Two stores
+
+**Metadata** (files, folders, owners, versions, the ordered list of chunk hashes) lives in a relational database (B2). **Blobs** (the chunk bytes) live in object storage, addressed by hash. Clients upload bytes directly to object storage with a **presigned URL**, so the app servers never carry the data.
+
+### Chunking and dedup
+
+Compute SHA-256 per chunk; ask the server which hashes it already has; upload only the rest; then commit the file as an ordered hash list. Identical chunks, even across users, are stored once (mind privacy: cross-user dedup can leak whether a file exists).
+
+**Fixed-size chunks** are simple and fragile: insert 10 bytes at the start and every boundary moves, so measured reuse was 0 of 49. **Content-defined chunking** picks boundaries from a rolling hash of the content itself, so boundaries realign after the edit: 136 of 137 chunks reused. Cost: more CPU and variable chunk sizes.
+
+### Resumable upload
+
+Track which chunks are committed; after a disconnect the client asks for the missing list and continues.
+
+### Sync and conflicts
+
+Clients poll or subscribe to a change feed with a cursor. If two devices edit the same file offline, versions diverge (F0, vector clocks): keep both, e.g. a "conflicted copy", rather than silently overwriting.
+
+### Housekeeping
+
+Reference-count chunks; delete only unreferenced ones after a grace period; verify hashes on read to catch corruption; encrypt at rest.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Deleting a chunk when one file drops it. Other files may reference it.
+</Callout>
+
+- **Proxying uploads through app servers.**
+- **No integrity check on download.**
+- **Last-write-wins on conflicts.**
+- **Tiny chunks**, so metadata dominates.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Smaller chunks dedup better and add metadata and requests; larger chunks are cheap and re-upload more on edits.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Monitor storage growth, dedup ratio, orphan chunks and upload failure rates; test restore, not only backup.
+</Callout>
+
+## Check yourself
+
+<Exercise id="fs-cdc" kind="scenario" prompt="You insert 10 bytes at the start of a large file. Which chunking reuses most chunks?" options={["Fixed-size", "Content-defined", "Neither", "Both equally"]} answer={1} explain="Content-defined boundaries depend on content, so they realign after the insert." />
+
+<Exercise id="fs-presign" kind="quiz" prompt="Why use presigned URLs for uploads?" options={["Prettier URLs", "Clients send bytes straight to object storage, sparing app servers", "They compress files", "They remove auth"]} answer={1} explain="Large transfers bypass your servers while access stays time-limited and scoped." />
+
+<Exercise id="fs-gc" kind="debug" prompt="Deleting one file removed a chunk another file needed. What was missing?" options={["A bigger disk", "Reference counting before deleting chunks", "Faster hashing", "More metadata columns"]} answer={1} explain="Only chunks with zero references can be removed." />

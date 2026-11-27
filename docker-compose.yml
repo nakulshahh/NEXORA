@@ -1,0 +1,65 @@
+# One command for the whole stack:   docker compose up --build      ->  http://localhost:3000
+# Local development only. Every value below is a throwaway; production secrets live in the host's dashboard.
+# `docker compose up -d db` (pnpm db:up) still starts just the database for hot-reload development.
+services:
+  db:
+    image: pgvector/pgvector:pg16   # same major version and extension set as Neon
+    environment:
+      POSTGRES_USER: nexora
+      POSTGRES_PASSWORD: nexora-local-only   # local throwaway; not a real credential
+      POSTGRES_DB: nexora
+    ports: ["5432:5432"]
+    volumes: ["nexora-pg:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexora"]
+      interval: 5s
+      retries: 10
+
+  migrate:                           # one-shot: apply SQL migrations, then exit
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    command: ["node", "dist/db/migrate.js"]
+    environment: &api-env
+      NODE_ENV: development          # production would demand https origins and Secure cookies
+      DATABASE_URL: postgres://nexora:nexora-local-only@db:5432/nexora
+      WEB_ORIGIN: http://localhost:3000
+      COOKIE_SECRET: ${COOKIE_SECRET:-local-only-cookie-secret-0123456789abcdef}
+      AI_SERVICE_URL: http://ai:8000
+      AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN:-local-only-internal-token-0123}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+    depends_on: { db: { condition: service_healthy } }
+    restart: "no"
+
+  api:
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    environment: *api-env
+    depends_on:
+      db: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    ports: ["4000:4000"]
+    stop_grace_period: 15s           # server.ts drains in-flight requests for up to 10 s
+
+  ai:
+    build: { context: ., dockerfile: apps/ai/Dockerfile }
+    environment:
+      APP_ENV: development           # token optional locally, but we set one so the gateway path matches production
+      DATABASE_URL: postgres://nexora:nexora-local-only@db:5432/nexora
+      AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN:-local-only-internal-token-0123}
+      EMBEDDER: hashing
+    depends_on:
+      db: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    stop_grace_period: 15s            # not published: only the API gateway may call it
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args: { API_ORIGIN: "http://api:4000" }
+    depends_on: [api]
+    ports: ["3000:3000"]
+
+volumes:
+  nexora-pg:

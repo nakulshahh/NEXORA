@@ -1,0 +1,97 @@
+---
+chapter: D3
+slug: ci-cd-pipelines
+title: "CI/CD: from commit to production"
+order: 1
+summary: "A pipeline runs the same checks on every change, builds an artifact once, and promotes that same artifact through environments. Fast feedback and the ability to roll back make frequent, small releases safe."
+objectives:
+  - Describe the stages of a CI/CD pipeline and what each protects against
+  - Explain build once, deploy many, and why artifacts are immutable
+  - Compare rolling, blue-green and canary deployments
+  - Handle database migrations and secrets safely in a pipeline
+concepts: [continuous integration, continuous delivery, pipeline, artifact, blue-green, canary, rollback, feature flag, trunk-based development]
+reading:
+  - title: "Martin Fowler: Continuous Integration"
+    url: "https://martinfowler.com/articles/continuousIntegration.html"
+  - title: "GitHub docs: Understanding GitHub Actions"
+    url: "https://docs.github.com/en/actions/get-started/understand-github-actions"
+misconceptions:
+  - belief: "CI/CD means every commit goes straight to production with no human involvement."
+    correction: "Continuous integration means merging and checking changes frequently. Continuous delivery means every change is always releasable; whether the final step is automatic (deployment) or a button is a policy choice."
+  - belief: "A passing pipeline proves the release is safe."
+    correction: "It proves the checks you wrote passed. Safety comes from good tests plus gradual rollout, monitoring and fast rollback for what tests miss."
+---
+
+## Why it exists
+
+Manual releases are slow, error-prone and rare, which makes each one bigger and riskier. A pipeline turns release into a repeatable, boring routine, so changes are small, frequent and easy to undo.
+
+<Callout kind="why">
+Small changes shipped often are safer than big changes shipped rarely, because failures are easier to find, explain and revert.
+</Callout>
+
+## How it works
+
+**Verification status:** pipelines run on hosted runners that are not available in the development sandbox, so the workflow below was checked by reading and by running its individual commands locally, not by executing it on GitHub. The first push will be its first real run.
+
+### Stages
+
+This project's own pipeline (`.github/workflows/ci.yml`) is a concrete example. On every push and pull request it runs independent jobs in parallel:
+
+- **Secret scan**: fail if a credential pattern appears in the repository.
+- **Web**: install from the frozen lockfile, run the content check (frontmatter, links, prerequisite cycles), typecheck, tests, build.
+- **API**: typecheck, tests against a real Postgres service container, build and a migration deploy.
+- **AI service**: install the Python package and run its tests.
+- **Audit**: dependency advisories for both ecosystems (also on a weekly schedule, since advisories appear without commits).
+- **Docker**: build every image, start the whole stack with Compose and run a smoke test against it.
+
+Order checks from fastest to slowest so failures return quickly, run independent jobs in parallel, cache dependencies, and keep the whole pipeline in minutes: a 30-minute pipeline is skipped or ignored.
+
+### Build once, deploy many
+
+Build the artifact (a container image) **once**, tag it with the commit, and promote that exact artifact through staging to production, changing only configuration. Rebuilding per environment means production runs something no one tested. Artifacts are immutable; a fix is a new build.
+
+### Deployment strategies
+
+- **Rolling**: replace instances gradually (the Kubernetes default). Simple; old and new versions run together, so changes must be compatible (the expand and contract rule from B2).
+- **Blue-green**: run the new version beside the old and switch traffic at once; rollback is a switch back. Needs double capacity.
+- **Canary**: send a small share of traffic (say 1 to 5 percent) to the new version, compare error rate and latency with the old, then expand or abort. Best protection, needs good metrics.
+- **Feature flags** separate deploying code from releasing a feature, so you can ship dark and enable gradually (B11).
+
+### Migrations and secrets
+
+Run database migrations as an explicit pipeline step, backwards-compatible with the *previous* app version, since both run during a rollout. Keep secrets in the pipeline's secret store, scoped per environment, never printed in logs; pull requests from forks should not receive them. Protect the production deploy with required reviews and a short-lived credential.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Rebuilding the artifact for each environment, or "fixing" production by hand. The next deploy overwrites the fix and nobody knows what is actually running.
+</Callout>
+
+- **Flaky tests** that people retry until green, hiding real failures.
+- **Slow pipelines** that developers bypass.
+- **Deploys with no rollback plan or no health gate.**
+- **Migrations that break the previous version.**
+- **Secrets echoed in build logs.**
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+More automation and checks catch more problems and make the pipeline slower and more complex to maintain. Canary and blue-green reduce risk and cost infrastructure and monitoring investment. Choose the lightest strategy that matches how bad a bad release is for your users.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Track the four delivery metrics (deployment frequency, lead time, change failure rate, time to restore), gate deploys on health checks, keep rollback one command away and rehearsed, and record which commit and image are running in every environment.
+</Callout>
+
+## Check yourself
+
+<Exercise id="cd-once" kind="quiz" prompt="What does 'build once, deploy many' mean?" options={["Build only on Fridays", "Create one artifact and promote the same artifact through all environments", "Deploy to many cloud regions only", "Cache the build forever"]} answer={1} explain="The exact bytes tested in staging are what run in production; only configuration differs." />
+
+<Exercise id="cd-canary" kind="scenario" prompt="You want to limit damage from a risky release by exposing it to few users first and comparing metrics. Which strategy?" options={["Big-bang deploy", "Canary deployment", "Editing the server by hand", "Deleting the old version first"]} answer={1} explain="A canary sends a small share of traffic to the new version so problems appear with limited impact." />
+
+<Exercise id="cd-migrate" kind="debug" prompt="During a rolling deploy old instances start failing because a migration dropped a column they still read. What principle was broken?" options={["Caching", "Migrations must be backwards-compatible with the previous version (expand and contract)", "Use more replicas", "Increase timeouts"]} answer={1} explain="Old and new versions overlap. Change the schema in compatible steps." />
+
+<Exercise id="cd-flaky" kind="quiz" prompt="Why are flaky tests especially harmful in CI?" options={["They run faster", "They teach people to rerun and ignore failures, so real breakage slips through", "They use more disk", "They cannot be fixed"]} answer={1} explain="A pipeline is only trusted if red means something. Fix or remove flaky tests." />

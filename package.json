@@ -1,0 +1,15 @@
+{
+  "name": "nexora",
+  "private": true,
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "dev": "pnpm --filter @nexora/web dev",
+    "build": "pnpm --filter @nexora/web build",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "dev:api": "pnpm --filter @nexora/api dev",
+    "test": "pnpm -r --if-present test",
+    "db:up": "docker compose up -d db",
+    "db:migrate": "pnpm --filter @nexora/api db:migrate",
+    "check:secrets": "node scripts/check-secrets.mjs"
+  }
+}

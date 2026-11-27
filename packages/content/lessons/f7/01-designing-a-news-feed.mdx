@@ -1,0 +1,83 @@
+---
+chapter: F7
+slug: designing-a-news-feed
+title: "Design: a news feed"
+order: 1
+summary: "A feed merges recent posts from people you follow. Fan-out on write precomputes feeds and costs a lot for popular accounts; fan-out on read computes on demand. Production systems mix both."
+objectives:
+  - Compare fan-out on write with fan-out on read using numbers
+  - Explain the celebrity problem and the hybrid approach
+  - Design feed storage and pagination with cursors
+  - Identify consistency and ranking concerns
+concepts: [fan-out on write, fan-out on read, hybrid feed, celebrity problem, cursor pagination, timeline, ranking, cache, write amplification]
+reading:
+  - title: "Twitter: The Infrastructure Behind Twitter (Timelines)"
+    url: "https://www.infoq.com/presentations/Twitter-Timeline-Scalability/"
+  - title: "Designing Data-Intensive Applications, chapter 1 (Twitter example)"
+    url: "https://dataintensive.net/"
+misconceptions:
+  - belief: "Precomputing every follower's feed is always better because reads are fast."
+    correction: "It multiplies writes by follower count. At 116 posts/s and 200 followers that is 23 000 feed writes/s; one post by an account with 50 million followers is 50 million writes."
+  - belief: "Computing the feed at read time is too slow to ever use."
+    correction: "For accounts with few followers or rarely active readers it is cheap and avoids wasted writes. Reads merge a bounded number of timelines and can be cached."
+---
+
+## Why it exists
+
+The feed is the textbook trade between work at write time and work at read time, driven by skewed follower counts.
+
+<Callout kind="why">
+One design question: where do you pay the cost of joining "posts" with "who follows whom"?
+</Callout>
+
+## How it works
+
+### Numbers
+
+Assume 10 million posts/day (~116 posts/s) and 200 followers on average.
+
+- **Fan-out on write**: on each post, insert its id into each follower's feed list (a cache or table per user). 116 × 200 = **23 200 feed writes/s**. A read is one lookup, very fast.
+- **Fan-out on read**: store posts per author. A read fetches the latest posts from each of ~200 followed accounts and merges them: at about 231 feed reads/s each merges ~200 timelines. Writes are trivial, reads are heavier.
+
+### The celebrity problem
+
+Follower counts are skewed. Writing one post to 50 million feeds is slow, bursty and wasteful (most followers are inactive). Hybrid: **push** for ordinary accounts, **pull** for very popular ones, and merge both when reading. Also skip pushing to inactive users, rebuilding their feed on return.
+
+### Storage and paging
+
+Keep per-user feeds as a bounded list of post ids (the newest few hundred) in a cache, with posts fetched by id. Page with a **cursor** (last seen id or time), not offset, so new posts do not shift pages (B3 pagination). Deletions and blocks are applied at read time by filtering.
+
+### Ranking
+
+Chronological is a sort. Ranked feeds score candidates with signals (recency, affinity, engagement), which adds a scoring stage and makes the result non-reproducible; keep it separate from retrieval.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Ignoring skew: a design verified with average follower counts collapses on the first account with millions.
+</Callout>
+
+- **Offset pagination on a changing list.**
+- **Unbounded feed lists.**
+- **Fan-out inside the request path** instead of a queue (F4).
+- **Forgetting deletes and privacy changes.**
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Push gives fast reads and heavy, bursty writes; pull gives light writes and heavier reads; hybrid has the best behaviour and the most moving parts.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Monitor fan-out queue lag, feed read latency and cache hit rate, and set a follower threshold for switching strategy based on measurement.
+</Callout>
+
+## Check yourself
+
+<Exercise id="nf-write" kind="predict" prompt="116 posts/s with 200 followers each. Feed writes per second under fan-out on write?" options={["116", "2 320", "23 200", "200"]} answer={2} explain="Each post is written to every follower feed: 116 x 200 = 23 200 writes per second." />
+
+<Exercise id="nf-celeb" kind="scenario" prompt="An account with 50 million followers posts. What is the sensible approach?" options={["Push to all 50 million at once", "Do not push; merge that account's posts when followers read", "Block the post", "Delete followers"]} answer={1} explain="Pull for celebrities avoids huge write amplification." />
+
+<Exercise id="nf-cursor" kind="quiz" prompt="Why use cursor pagination for feeds?" options={["It is prettier", "New posts do not shift pages and cause duplicates or skips", "It uses less RAM only", "It is required by HTTP"]} answer={1} explain="Offsets shift as the list changes; cursors anchor to a position." />

@@ -1,0 +1,104 @@
+---
+chapter: D4
+slug: what-to-test-and-the-test-pyramid
+title: "What to test: the pyramid, and tests that earn their keep"
+order: 1
+summary: "Tests are only worth what they catch and how fast they run. Many fast unit tests for pure logic, fewer integration tests against real dependencies, and a handful of end-to-end checks give the best protection per second of waiting."
+objectives:
+  - Describe unit, integration and end-to-end tests and what each is good at
+  - "Choose what to test: behaviour, boundaries and failure modes, not implementation"
+  - Explain why integration tests should use a real database
+  - Recognise properties that make code easy to test
+concepts: [unit test, integration test, end-to-end test, test pyramid, test double, determinism, boundary value, regression test]
+reading:
+  - title: "Martin Fowler: The Practical Test Pyramid"
+    url: "https://martinfowler.com/articles/practical-test-pyramid.html"
+  - title: "Vitest: Getting started"
+    url: "https://vitest.dev/guide/"
+misconceptions:
+  - belief: "High code coverage means the code is well tested."
+    correction: "Coverage tells you which lines ran, not whether anything checked the results. A test with no assertions gives coverage and no protection. Look at which behaviours and failure modes are asserted."
+  - belief: "Mocking every dependency makes tests faster and therefore better."
+    correction: "Heavy mocking tests your assumptions about the dependency, not the dependency. A mocked database cannot catch a wrong query, a missing index or a constraint. Use real dependencies where they are cheap to run."
+---
+
+## Why it exists
+
+You change code with confidence only if something tells you quickly when you broke it. Tests are that alarm. A bad test suite is slow, flaky or asserts nothing, and people stop trusting it; a good one makes refactoring boring.
+
+<Callout kind="why">
+Judge each test by the bug it would catch and the seconds it costs. The best suites catch most bugs in seconds.
+</Callout>
+
+## How it works
+
+### The pyramid
+
+- **Unit tests**: one function or module with no network or database. Very fast (thousands per second), precise failures. Best for pure logic: validation, parsing, calculations, state machines.
+- **Integration tests**: several parts together with real dependencies, such as the HTTP layer plus a real database. Slower, but they catch what units cannot: wrong SQL, constraint behaviour, serialisation, middleware order.
+- **End-to-end tests**: the deployed system through its real interface. Slowest and most brittle; keep a few for the critical journeys (sign up, pay).
+
+This repository follows that shape. Running its three suites in the sandbox:
+
+```text file=suites.txt
+web  (pure logic: simulations, schemas, scheduler):   129 tests in about 3 s
+api  (real Express app against real Postgres):         99 tests in about 11 s
+ai   (extraction, retrieval, refusal, adversarial):    60 tests in about 4 s
+```
+
+Most are fast, pure tests, and the API tests run against an actual Postgres so queries, constraints and migrations are exercised. The simulations are deterministic (the same seed gives the same steps), which is precisely what makes them testable.
+
+### What to assert
+
+Test **behaviour through the public interface**, not private implementation, so refactoring does not break tests. Cover:
+
+- the normal path;
+- **boundaries**: empty, one, maximum, just over the limit;
+- **failure modes**: invalid input (the A5 lessons), timeouts, duplicate requests, authorisation failures (a user reading another user's record must get 404 or 403);
+- **regressions**: every bug fixed gets a test that failed before the fix.
+
+### Testing with real dependencies
+
+An integration test that uses a real Postgres catches things a mock cannot: a typo in SQL, a missing unique constraint, a migration that does not run. Use a throwaway database per test run, reset state between tests, and run the same Postgres version as production. Use **test doubles** (fakes or stubs) for things you do not control or that cost money: payment providers, email, third-party APIs, and for slow or random behaviour such as clocks.
+
+### Make code testable
+
+Pure functions with explicit inputs are trivially testable. Separate decisions (logic) from effects (I/O), inject dependencies (the controller-service-repository layering from A6), and take the clock and random numbers as parameters. Nondeterminism is the enemy: a seeded random generator and an injected clock make time-dependent logic repeatable.
+
+### Flaky tests
+
+A test that sometimes fails without a code change is **flaky**. Typical causes: real clocks and sleeps, shared state between tests, order dependence, races, and network calls. Fix by controlling time, isolating state and waiting for conditions instead of sleeping. Do not retry-until-green: that teaches the team to ignore red.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Writing tests that restate the implementation (assert that function A called function B). They break on every refactor and catch nothing. Assert outcomes, not steps.
+</Callout>
+
+- **No assertions**, or only "does not throw".
+- **Mocking the database** and shipping a broken query.
+- **Shared mutable state** between tests, so order matters.
+- **Slow suites** that nobody runs locally.
+- **Only happy paths**, so the first real input breaks things.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+More tests give more safety and more maintenance and wait time. Higher-level tests are realistic and slow; lower-level ones are fast and miss integration bugs. Spend where failure is expensive (money, security, data loss) and keep the rest lean.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Run the fast suite on every save or commit and the full suite in CI before merge, track suite time and flaky failures as metrics, keep a small post-deploy smoke test against the live system, and treat a test that cannot fail as a bug.
+</Callout>
+
+## Check yourself
+
+<Exercise id="test-pyramid" kind="quiz" prompt="Which tests should you have the most of?" options={["End-to-end tests", "Fast unit tests of pure logic, then fewer integration tests, then a few end-to-end tests", "Manual tests only", "Tests that mock everything"]} answer={1} explain="Fast tests give quick feedback and precise failures; slower realistic tests cover integration at lower counts." />
+
+<Exercise id="test-mock" kind="debug" prompt="All tests pass with a mocked database, but production fails with a unique-constraint violation the tests never saw. Why?" options={["Tests are always wrong", "The mock does not enforce the constraint, so the tests never exercised it", "Postgres is flaky", "The mock was too fast"]} answer={1} explain="A mock reproduces your assumptions, not the database's behaviour. Use a real database for tests that depend on queries and constraints." />
+
+<Exercise id="test-coverage" kind="scenario" prompt="A suite reaches 95 percent line coverage, but a bug where a negative quantity creates a negative price ships. What is the likely gap?" options={["Coverage is not measured correctly", "No test asserted the behaviour for invalid or boundary input", "Tests are too fast", "The code has too few lines"]} answer={1} explain="Coverage shows lines executed, not behaviours checked. Boundary and failure-mode assertions catch this class of bug." />
+
+<Exercise id="test-flaky" kind="debug" prompt="A test passes locally and fails randomly in CI. It uses setTimeout(…, 100) and then checks a result. What is the best fix?" options={["Increase the sleep to 5 seconds", "Wait for the condition or control the clock, instead of guessing a delay", "Retry the test three times", "Delete the assertion"]} answer={1} explain="Sleeps encode a race with the machine's speed. Waiting for the actual condition or injecting a fake clock makes the test deterministic." />

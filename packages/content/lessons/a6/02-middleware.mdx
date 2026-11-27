@@ -1,0 +1,120 @@
+---
+chapter: A6
+slug: middleware
+title: "Middleware: a pipeline around your handler"
+order: 2
+summary: "Middleware is a chain of functions that each see the request, then either pass it along or answer it. Order is behaviour: the same functions in a different order do a different job."
+objectives:
+  - Model middleware as a chain where each function receives a next callback
+  - Predict execution order, including what runs after next returns
+  - Explain short-circuiting and why authentication runs before handlers
+  - Route errors to one central handler
+concepts: [middleware, next, pipeline, short-circuit, error handler, cross-cutting concern, request context]
+reading:
+  - title: "Express: Using middleware"
+    url: "https://expressjs.com/en/guide/using-middleware.html"
+  - title: "Express: Error handling"
+    url: "https://expressjs.com/en/guide/error-handling.html"
+misconceptions:
+  - belief: "Middleware runs in the order it is defined only on the way in."
+    correction: "Each middleware wraps the rest of the chain. Code before next() runs on the way in, code after next() returns runs on the way out, in reverse order. That is how timing and logging wrap a request."
+  - belief: "If a middleware does not call next(), nothing bad happens."
+    correction: "Not calling next() without sending a response leaves the request hanging until the client times out. Stopping the chain is only right when you have already answered."
+---
+
+## Why it exists
+
+Some work applies to many routes: parse the body, attach a request id, check who the caller is, measure the time taken, apply a rate limit, turn errors into responses. Copying those lines into every handler is repetitive and easy to forget on one route, and a forgotten authentication check is a vulnerability.
+
+**Middleware** extracts that work into small functions arranged in a chain around the handler. These are **cross-cutting concerns**: things that cut across features rather than belonging to one.
+
+<Callout kind="why">
+A pipeline lets you state "every request is timed, authenticated, then handled" once, in one place, and makes a missing step impossible rather than unlikely.
+</Callout>
+
+## How it works
+
+Each middleware receives the request and a `next` function. Calling `next()` hands control to the following one; returning without calling it stops the chain. A minimal runner shows the whole idea:
+
+```js file=compose.mjs mark=5,6,7,8,9,10,11
+function compose(stack) {
+  return function run(req) {
+    let i = -1;
+    const dispatch = async (n) => {
+      if (n <= i) throw new Error("next() called twice");
+      i = n;
+      const fn = stack[n];
+      if (!fn) return;
+      return fn(req, () => dispatch(n + 1));
+    };
+    return dispatch(0);
+  };
+}
+```
+
+Now three middleware: one times the request, one rejects anonymous callers, one is the handler.
+
+```js file=pipeline.mjs mark=1,2,3
+const timing  = async (req, next) => { log.push("timing:in"); await next(); log.push("timing:out"); };
+const auth    = async (req, next) => { log.push("auth"); if (!req.user) { req.status = 401; return; } await next(); };
+const handler = async (req) => { log.push("handler"); req.status = 200; };
+const run = compose([timing, auth, handler]);
+```
+
+For an anonymous request the log reads `timing:in > auth > timing:out` with status 401. The handler never ran: `auth` **short-circuited** by not calling `next`. For a signed-in request it reads `timing:in > auth > handler > timing:out` with status 200.
+
+Look at `timing:out`. It runs **after** the rest of the chain finished, because `await next()` returns only once everything downstream has completed. That "on the way out" phase is how loggers record the final status and duration.
+
+### Order is behaviour
+
+- A **request-id** middleware belongs first, so every later log line has an id.
+- **Body parsing and size limits** come before anything that reads the body.
+- **Authentication** comes before authorization and before the handlers it protects.
+- A **rate limiter** often goes before expensive work such as parsing or password hashing.
+- The **error handler** goes last, because it must catch what everything above throws.
+
+### Errors
+
+If a middleware or handler throws, the rejection travels back up through the chain. One middleware near the top can catch it and translate it to a response, so no handler needs its own try/catch:
+
+```js file=errors.mjs mark=1
+const boom = compose([async (r, next) => { try { await next(); } catch (e) { r.status = 500; r.err = e.message; } },
+                      async () => { throw new Error("db down"); }]);
+```
+
+Running it leaves `status` 500 and the message `db down`. In Express the equivalent is a function with four parameters `(err, req, res, next)` registered last; Express 5 also forwards rejected promises from async handlers to it automatically.
+
+The `n <= i` check in `compose` catches a classic bug: calling `next()` twice, which would run the rest of the chain twice and usually try to send two responses.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Forgetting to call `next()` (or to respond) on a branch. The request hangs, the client waits for its timeout, and the connection stays open on your server.
+</Callout>
+
+- **Wrong order**, such as authorization before authentication, or parsing the body before enforcing a size limit.
+- **Calling `next()` and then also sending a response**, which tries to answer twice.
+- **Stashing per-request data in module-level variables.** Concurrent requests overwrite each other. Attach data to the request object (or an async-local context) instead.
+- **Heavy synchronous work** in a global middleware, which blocks the event loop for every request.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+A global pipeline is powerful but implicit: the behaviour of a route depends on code registered elsewhere, and a wrong order is invisible in the route file. Explicit per-route composition is easier to read but easy to forget. Many teams apply security and observability globally, and opt in to everything else per route.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Write the middleware order down in one file and test it: a request without credentials must be rejected, an oversized body must be refused, and an error must produce your standard error shape. Keep each middleware small and fast, and measure the pipeline's total overhead per request.
+</Callout>
+
+## Check yourself
+
+<Exercise id="mw-predict-order" kind="predict" prompt="With the chain timing > auth > handler and an anonymous request, which entries are logged?" options={["timing:in, auth, handler, timing:out", "timing:in, auth, timing:out", "auth, timing:in", "timing:in, timing:out"]} answer={1} explain="auth short-circuits without calling next, so the handler never runs. timing still logs on the way out because its await next() returns once the chain stops." />
+
+<Exercise id="mw-no-next" kind="debug" prompt="A middleware checks a header, and for bad values it just returns without calling next() or sending anything. What does the client experience?" options={["A 404", "A hung request until it times out", "A 500 error", "The handler runs anyway"]} answer={1} explain="Nothing answers the request and nothing continues the chain, so the connection stays open. Either call next() or send a response on every path." />
+
+<Exercise id="mw-order-auth" kind="quiz" prompt="Where should the authentication middleware sit relative to the route handlers it protects?" options={["After them", "Before them", "Anywhere, order does not matter", "Inside the database layer"]} answer={1} explain="Middleware runs in order, so authentication must come first for its short-circuit to prevent the handler from running at all." />
+
+<Exercise id="mw-module-state" kind="scenario" prompt="A middleware stores the current user in a module-level variable that handlers read. Under concurrent requests, what goes wrong?" options={["Nothing, Node runs one request at a time", "One request can read another request's user", "The variable is garbage collected", "Express rejects the middleware"]} answer={1} explain="Requests interleave at every await. A shared variable is overwritten by whichever request wrote last, so use the request object or async-local storage for per-request data." />

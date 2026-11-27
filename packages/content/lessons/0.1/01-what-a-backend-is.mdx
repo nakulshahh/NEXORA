@@ -1,0 +1,116 @@
+---
+chapter: "0.1"
+slug: what-a-backend-is
+title: "What a backend actually is"
+order: 1
+summary: A backend is a program that waits for requests, applies rules to shared state, and answers. Everything else, frameworks included, is detail around that loop.
+objectives:
+  - Describe the client, server and request-response model in your own words
+  - Name the three things a backend owns that a client cannot be trusted with
+  - Explain why a server is a long-running program rather than a script
+  - Tell apart the application, the framework and the runtime
+concepts: [client, server, request-response, state, trust boundary, long-running process]
+watch:
+  - title: "Roadmap for backend from first principles"
+    url: "https://www.youtube.com/watch?v=0Rwb4Xmlcwc"
+    channel: Sriniously
+reading:
+  - title: "MDN: Client-Server overview"
+    url: "https://developer.mozilla.org/en-US/docs/Learn_web_development/Extensions/Server-side/First_steps/Client-Server_overview"
+misconceptions:
+  - belief: "The backend is the part of the app that talks to the database."
+    correction: "Talking to a database is one tool. The backend is the part you control and can trust: it enforces rules, owns shared state, and decides what each caller may do."
+  - belief: "A framework like Express or Nest is the backend."
+    correction: "A framework is a library that parses requests and routes them. The backend is your program plus the machinery underneath it: runtime, operating system, network."
+---
+
+## Why it exists
+
+A phone app or a web page runs on a machine you do not control. The user can edit the page, replay requests, or write their own client. Yet some things must be the same for everyone: your account balance, the order of messages in a chat, whether a username is taken. Those need one place that every client agrees on and that no client can tamper with. That place is the **backend**.
+
+<Callout kind="why">
+A backend exists because shared truth and trusted rules cannot live on devices you do not own.
+</Callout>
+
+## How it works
+
+### The request-response model
+
+Two roles. A **client** starts a conversation by sending a **request**. A **server** listens, does some work, and sends back one **response**. The server never calls the client uninvited in this basic model; it only answers.
+
+<Seq participants={["Client", "Server"]} messages={[
+  {"from":0,"to":1,"label":"Request: what do you want done?"},
+  {"from":1,"to":0,"label":"Response: how did it go, and here is the result"}
+]} />
+
+Everything in this course is some detail of those two arrows: how the client finds the server, how the bytes travel, how the server decides what to do, where it keeps data, and what happens when something fails.
+
+### A server is a program that does not exit
+
+A script runs, prints, and ends. A server starts, **binds to a port**, and then waits forever for work. Here is the smallest honest backend in Node:
+
+```js file=server.mjs mark=4,5,9
+import http from "node:http";
+
+let visits = 0; // shared state, owned by the server
+
+const server = http.createServer((req, res) => {
+  visits += 1; // a rule applied to that state
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ visits }));
+});
+
+server.listen(3000, () => console.log("waiting on :3000"));
+```
+
+Run it and call it twice with `curl localhost:3000`. The counter survives between requests because the *process* stays alive. That is also its weakness: restart it and the state is gone. Chapters on databases exist because of that sentence.
+
+### What a backend owns
+
+1. **Shared state.** The one copy of the data that all clients agree on.
+2. **Rules.** Who may do what, which values are valid, what must happen together or not at all.
+3. **Trust.** A client can claim anything. The backend checks.
+
+A client may *show* a discount; only the backend may *grant* one. A client may *hide* a button; only the backend may *refuse* the action.
+
+### Application, framework, runtime
+
+- The **application** is the code you wrote: your routes and rules.
+- The **framework** (Express, Fastify, Nest) parses requests, matches routes and runs middleware, so you do not hand-roll it.
+- The **runtime** (Node.js) runs your JavaScript and gives it access to sockets, files and timers through the operating system.
+
+The next lessons peel those layers: networking underneath, then the protocol, then the machinery around your code.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Trusting the client. Validating a form in the browser improves the user experience, but it protects nothing. Every rule that matters must be enforced again on the server, because requests can be made without your page at all.
+</Callout>
+
+- **Keeping important state only in memory.** It vanishes on restart and is not shared between two copies of the server.
+- **Writing the server like a script**, with top-level work that blocks or exits on the first error.
+- **Learning one framework instead of the model.** Frameworks change every few years; the request-response model has not.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Putting logic on the server makes it trustworthy and consistent, but every action now costs a network round trip and the server becomes a shared resource that can be overloaded or go down. Good designs put presentation on the client and anything that must be true on the server.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+A real backend is never one process on one machine. It runs as several copies behind a load balancer, restarts on failure, keeps state in a database, and is watched with logs and metrics. The mental model stays the same; each of those pieces is a chapter of this course.
+</Callout>
+
+Because several copies run at once, the `visits` counter above would be wrong in production: each copy would count its own. That is the first example of a theme you will meet repeatedly: state must live somewhere all copies share.
+
+## Check yourself
+
+<Exercise id="who-trusts" kind="quiz" prompt="A shopping app checks in the browser that a coupon is valid and lowers the price shown. Where must the price be enforced for the discount to be safe?" options={["In the browser, since it already checks", "On the server, when the order is placed", "In the database column type only", "In the CSS"]} answer={1} explain="A client can be modified or bypassed entirely. Only the server, which the owner controls, can be trusted to enforce prices and discounts." />
+
+<Exercise id="visits-restart" kind="predict" prompt="The counter server above has handled 5 requests. You restart the process and call it once. What does it return?" options={["6", "1", "5", "An error"]} answer={1} explain="The counter lives in the process's memory. A restart creates a new process with visits at 0, so the next response is 1." />
+
+<Exercise id="two-copies" kind="scenario" prompt="You run two identical copies of the counter server behind a load balancer. A user calls it four times and sees the numbers 1, 1, 2, 2. What is the cause?" options={["The load balancer is broken", "Each copy keeps its own in-memory counter, so state is not shared", "HTTP is stateless so counters cannot work", "The port is wrong"]} answer={1} explain="Each process has a private variable. Alternating requests hit different copies, so each counts its own. Shared state must live in a store both copies use." />
+
+<Exercise id="framework-vs-backend" kind="quiz" prompt="Which statement is most accurate?" options={["Express is the backend", "The backend is your program plus the runtime and system beneath it; a framework is one library inside it", "A backend is always a database", "A backend must be written in Node.js"]} answer={1} explain="Frameworks help with parsing and routing. The backend is the whole running system that holds state, applies rules and answers requests." />

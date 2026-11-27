@@ -1,0 +1,92 @@
+---
+chapter: C4
+slug: proxies-and-load-balancing
+title: "Reverse proxies and load balancing"
+order: 1
+summary: "A reverse proxy fronts your servers to terminate TLS, route and spread requests. Round robin ignores load, least connections reacts to it, and health checks keep traffic off dead servers."
+objectives:
+  - Describe what a reverse proxy does and what it hides
+  - Compare round robin and least connections under uneven request times
+  - Explain health checks, connection draining and sticky sessions
+  - Identify what makes a service horizontally scalable
+concepts: [reverse proxy, load balancer, round robin, least connections, health check, sticky session, stateless, horizontal scaling, CDN]
+reading:
+  - title: "NGINX docs: HTTP load balancing"
+    url: "https://nginx.org/en/docs/http/load_balancing.html"
+  - title: "MDN: Proxy servers and tunneling"
+    url: "https://developer.mozilla.org/en-US/docs/Web/HTTP/Proxy_servers_and_tunneling"
+misconceptions:
+  - belief: "Round robin spreads load evenly, so it is always fine."
+    correction: "Round robin spreads requests evenly, not work. When request durations differ, a server stuck with a few slow requests keeps receiving its full share and queues up. Least connections reacts to the actual load."
+  - belief: "Adding more servers behind a load balancer always scales a service."
+    correction: "Only if the servers are interchangeable. State kept in server memory (sessions, caches, counters) or a single shared database becomes the bottleneck, and more servers just add contention."
+---
+
+## Why it exists
+
+One server has a capacity ceiling and is a single point of failure. Running several identical copies fixes both, but clients need one address and something must decide which copy handles each request. That something is a **reverse proxy** or **load balancer**.
+
+<Callout kind="why">
+Load balancing turns "can this machine cope" into "how many machines do we add", provided your servers are stateless enough to be interchangeable.
+</Callout>
+
+## How it works
+
+A reverse proxy accepts client connections and forwards requests to **upstream** servers. Typical jobs: terminate TLS once, route by host or path, compress, cache static responses, enforce limits, add request ids, and hide the internal topology. It adds a hop (a little latency) and becomes critical infrastructure itself, so it is usually run redundantly.
+
+### Choosing a server
+
+Take three servers and 300 requests arriving every 15 ms. Most take 10 ms; about 5 percent take 400 ms (a heavy report, say). A seeded simulation of two policies:
+
+| Policy | Mean latency | Worst latency |
+| --- | --- | --- |
+| Round robin | about 163 ms | about 975 ms |
+| Least connections | about 51 ms | about 510 ms |
+
+Round robin sent requests to a server that was busy with a slow one while another sat idle. Least connections looked at what each server was doing right now. This is a simplified model (no network, perfect knowledge of load), so trust the *direction*, not the figures. Other policies: random with two choices ("power of two choices" gives most of the benefit cheaply), weighted (unequal servers), and IP-hash or cookie-based (stickiness).
+
+### Health checks and draining
+
+The balancer probes each server (for example `GET /healthz`) and stops sending traffic to those that fail. Keep the health endpoint cheap and honest, and do not make it depend on the database or one DB outage removes every server at once. When deploying, **drain**: stop new requests to a server, let in-flight ones finish, then stop it.
+
+### Sticky sessions versus stateless servers
+
+Sticky routing pins a client to one server so in-memory sessions work. It is a patch: load becomes uneven, and when that server dies the sessions die with it. Better: keep session state in a shared store (database or Redis) or in a signed token, so any server can handle any request.
+
+### Layers
+
+An **L4** balancer routes TCP connections without reading HTTP: very fast, less flexible. An **L7** balancer parses HTTP, so it can route by path, header or cookie. A **CDN** is a geographically distributed set of caching reverse proxies for static and cacheable content, cutting latency by serving from near the user.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Putting per-user state in server memory and then adding sticky sessions "to make it work". It hides the design problem and turns every deploy into a mass logout.
+</Callout>
+
+- **No health checks**, so a dead server keeps receiving a share of traffic.
+- **Health checks that depend on every downstream service**, causing cascading removals.
+- **Forgetting that the real client IP is in a forwarded header**, breaking logs and rate limits.
+- **A single proxy instance**, which is just a new single point of failure.
+- **Scaling the web tier while the single database stays the bottleneck.**
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+A proxy tier adds a hop, configuration and a component to secure and monitor; in return it gives redundancy, zero-downtime deploys and a place for cross-cutting rules. Smarter balancing needs more state (connection counts) and can still make mistakes when load information is stale.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Run at least two balancer instances, forward and trust client-IP headers only from your own proxies, set sensible timeouts and retry rules (retry only idempotent requests), watch per-server latency and error rates, and test taking one server away under load.
+</Callout>
+
+## Check yourself
+
+<Exercise id="lb-rr" kind="scenario" prompt="Requests vary from 10 ms to 400 ms. Round robin gives each server the same number of requests, yet one server's queue keeps growing. Why?" options={["The server is broken", "Equal request counts are not equal work, and round robin ignores current load", "Round robin only works with two servers", "The queue is a cache"]} answer={1} explain="A server that gets several slow requests falls behind while others idle. Least connections or power-of-two choices adapt to load." />
+
+<Exercise id="lb-health" kind="debug" prompt="A health check calls the database. The database has a 10-second hiccup and the whole site returns 503 even though the web servers are fine. Why?" options={["The balancer is too fast", "All servers failed their check and were removed together", "TLS expired", "The CDN cached the error"]} answer={1} explain="A dependency-heavy health check lets one shared failure remove every healthy server. Keep liveness checks local and cheap." />
+
+<Exercise id="lb-sticky" kind="quiz" prompt="What is the main problem with sticky sessions used to keep in-memory login sessions?" options={["They are insecure by definition", "Load becomes uneven and sessions are lost when that server dies or is redeployed", "They require a CDN", "They disable TLS"]} answer={1} explain="Pinning clients to servers hides state that should live in a shared store or a token." />
+
+<Exercise id="lb-scale" kind="predict" prompt="You double the web servers behind a load balancer but latency does not improve; the database CPU is at 100 percent. What is the bottleneck?" options={["The load balancer", "The shared database", "TLS", "DNS"]} answer={1} explain="More stateless servers cannot help if every request waits on one saturated database. Scale or relieve that component." />

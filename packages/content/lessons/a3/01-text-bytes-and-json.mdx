@@ -1,0 +1,110 @@
+---
+chapter: A3
+slug: text-bytes-and-json
+title: "Text, bytes and JSON"
+order: 1
+summary: "Networks carry bytes, not strings or objects. Know how UTF-8 turns characters into bytes and what JSON can and cannot represent, before it silently corrupts your data."
+objectives:
+  - Distinguish characters, code units and bytes, and count each
+  - Explain why Content-Length counts bytes
+  - List values JSON cannot represent faithfully
+  - Handle large integers and dates safely across a JSON boundary
+concepts: [UTF-8, bytes, serialization, JSON, number precision, BigInt, ISO 8601]
+reading:
+  - title: "MDN: JSON"
+    url: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON"
+  - title: "RFC 8259: The JSON Data Interchange Format"
+    url: "https://www.rfc-editor.org/rfc/rfc8259"
+misconceptions:
+  - belief: "A string's length is the number of bytes it takes on the wire."
+    correction: "length counts UTF-16 code units. The wire carries UTF-8 bytes, and one emoji can be 2 code units and 4 bytes. Content-Length counts bytes."
+  - belief: "JSON round-trips any JavaScript value."
+    correction: "Dates become strings, undefined is dropped, NaN becomes null, BigInt throws, and integers above 2^53 lose precision."
+---
+
+## Why it exists
+
+Your program holds objects. A socket carries only bytes. **Serialization** is the conversion from objects to bytes, and **deserialization** is the way back. Every request body and response body goes through it. If the two ends disagree about how, data is corrupted without any error.
+
+<Callout kind="why">
+Every integration bug of the form "it worked on my machine, but the other service saw different data" is a serialization disagreement.
+</Callout>
+
+## How it works
+
+### Characters versus bytes
+
+UTF-8 encodes each character in 1 to 4 bytes: plain ASCII takes 1, many accented letters take 2, most Asian scripts 3, emoji 4. I ran this to check:
+
+```js file=lengths.mjs mark=2,3,4
+const s = "héllo 👋";
+console.log(s.length);             // 8   UTF-16 code units
+console.log(Buffer.byteLength(s)); // 11  UTF-8 bytes
+console.log([...s].length);        // 7   characters (code points)
+```
+
+Three different answers for one string. The wire cares about the middle one: **`Content-Length` and any size limit are in bytes**. If you compute it with `s.length` you will truncate or hang a response that contains non-ASCII text.
+
+### Encoding must be agreed
+
+The same character is different bytes in different encodings: `é` is `c3 a9` in UTF-8 but `e9` in Latin-1. Declare it (`Content-Type: application/json; charset=utf-8`; JSON is UTF-8 by standard) and decode with the declared one.
+
+### What JSON can and cannot say
+
+JSON has objects, arrays, strings, numbers, booleans and null. That is all. Checking in Node:
+
+```js file=json-limits.mjs mark=1,2,3
+console.log(JSON.stringify({ d: new Date(0), u: undefined, nan: NaN }));
+// {"d":"1970-01-01T00:00:00.000Z","nan":null}
+console.log(JSON.parse('{"id":12345678901234567890}').id);
+// 12345678901234567000   (precision lost: numbers are 64-bit floats)
+JSON.stringify({ a: 1n });
+// throws: Do not know how to serialize a BigInt
+```
+
+- **Dates** have no JSON type; they become strings. Use ISO 8601 UTC (`2026-11-22T08:00:00Z`) and parse them explicitly.
+- **Numbers** are floats in JavaScript. Integers above 2^53 (9,007,199,254,740,992) lose precision. Send big ids and money as **strings** (or integers in the smallest unit, such as paise).
+- **`undefined` and functions** vanish; **NaN and Infinity** become `null`.
+
+### Money and floats
+
+`0.1 + 0.2` is `0.30000000000000004` in JSON too. Never use floats for money: store integer minor units and format on display.
+
+<Seq participants={["Service A", "Wire", "Service B"]} messages={[
+  {"from":0,"to":1,"label":"object -> JSON text -> UTF-8 bytes"},
+  {"from":1,"to":2,"label":"bytes with Content-Type and Content-Length (bytes)"},
+  {"from":2,"to":2,"label":"bytes -> JSON text -> object (parse errors become 400)"}
+]} />
+
+## Common mistakes
+
+<Callout kind="mistake">
+Sending a 64-bit database id as a JSON number. A JavaScript client reads it as a float and the last digits change, so it requests a different record. Send such ids as strings.
+</Callout>
+
+- **Computing sizes with `string.length`** for headers or limits.
+- **Trusting parse success as validity.** Valid JSON can still be the wrong shape; validate it (chapter A5).
+- **Letting `JSON.parse` exceptions become 500s.** Malformed client input is a 400.
+- **Putting dates in local time** without an offset.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+JSON is human readable, universal and easy to debug, but verbose, weakly typed and slower to parse than binary formats. For public APIs and most services, that trade is right. The next lesson covers when a binary format is worth its cost.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Set a maximum request body size (this API uses 256 KB for JSON) so a client cannot send a gigabyte to parse, and log parse failures at a low level. Use ISO 8601 UTC for every timestamp and document how big numbers are sent.
+</Callout>
+
+## Check yourself
+
+<Exercise id="bytes-length" kind="predict" prompt="In Node, const s = 'héllo 👋'. Which gives the number of bytes in UTF-8?" options={["s.length", "Buffer.byteLength(s)", "[...s].length", "s.split('').length"]} answer={1} explain="length counts UTF-16 code units and the spread counts characters. Buffer.byteLength counts UTF-8 bytes, which is what Content-Length needs." />
+
+<Exercise id="bigint-id" kind="scenario" prompt="Your database ids are 64-bit integers like 9007199254740993. A browser client shows the wrong record. What is the most likely cause and fix?" options={["A CSS bug", "The id was sent as a JSON number and rounded to a float; send ids as strings", "TLS corrupted the bytes", "The server is too slow"]} answer={1} explain="JavaScript numbers are 64-bit floats and cannot represent every integer above 2^53 exactly. Strings preserve the digits." />
+
+<Exercise id="json-undefined" kind="predict" prompt="What does JSON.stringify({a: undefined, b: NaN, c: null}) produce?" options={["{\"a\":null,\"b\":null,\"c\":null}", "{\"b\":null,\"c\":null}", "{\"c\":null}", "It throws"]} answer={1} explain="undefined properties are omitted, NaN becomes null, and null stays null." />
+
+<Exercise id="money-float" kind="debug" prompt="An API returns a total of 0.30000000000000004 for 0.10 + 0.20 rupees. What is the right design?" options={["Round in the client", "Use integer minor units (paise) in the API and format for display", "Switch to XML", "Send it as a float with more digits"]} answer={1} explain="Binary floats cannot represent most decimals exactly. Integers in the smallest unit avoid the error entirely." />

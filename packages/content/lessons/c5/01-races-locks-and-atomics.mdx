@@ -1,0 +1,117 @@
+---
+chapter: C5
+slug: races-locks-and-atomics
+title: "Race conditions, locks and atomic operations"
+order: 1
+summary: "A race condition happens when the result depends on the timing of operations that share state. You can get one even in single-threaded Node. Locks, atomic operations and avoiding shared state are the three ways to fix it."
+objectives:
+  - Define a race condition and a critical section
+  - Reproduce a race in single-threaded async code and in multi-threaded shared memory
+  - Compare a lock with an atomic operation and say when each fits
+  - Recognise check-then-act and read-modify-write as the classic shapes
+concepts: [race condition, critical section, mutex, atomic operation, SharedArrayBuffer, Atomics, read-modify-write, check-then-act, data race]
+reading:
+  - title: "MDN: Atomics"
+    url: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Atomics"
+  - title: "Node.js docs: Worker threads"
+    url: "https://nodejs.org/api/worker_threads.html"
+misconceptions:
+  - belief: "Node is single-threaded, so it has no race conditions."
+    correction: "Only one piece of JavaScript runs at a time, but every await is a point where other code can run. A read, an await and a write form a race window even on one thread."
+  - belief: "A tiny operation like counter++ is effectively instantaneous and safe."
+    correction: "It is three steps: read, add, write. Two threads can interleave those steps and lose updates, which is why unsynchronised increments produce wrong totals."
+---
+
+## Why it exists
+
+Concurrency means several things in progress at once, whether on several cores (parallelism) or interleaved on one (the event loop). When they touch shared state, correctness depends on timing, and bugs appear only under load. This lesson makes the timing visible.
+
+<Callout kind="why">
+Race conditions are the same bug in every layer: a read-modify-write on shared state, with a gap between the read and the write. You met it in the database (lost update) and meet it again in memory and in distributed systems.
+</Callout>
+
+## How it works
+
+### Races without threads
+
+```ts file=race.ts mark=2,3,4
+let bal = 100;
+async function deposit() {
+  const v = bal;                 // read
+  await sleep(10);               // another request runs here
+  bal = v + 10;                  // write a stale value
+}
+await Promise.all([deposit(), deposit()]);   // bal is 110, not 120
+```
+
+Measured: two deposits of 10 on a balance of 100 ended at **110**. One thread, no parallelism, and still a lost update, because the `await` let the second call read the old value. Any code that reads, awaits and then writes shared state is exposed. Fix: do the update without awaiting in the middle, or serialise access with a lock.
+
+### A lock (mutex)
+
+A **mutex** lets only one task into the **critical section**, the code that touches shared state, at a time. Others wait.
+
+```ts file=mutex.ts mark=3,4,7
+let busy = false;
+async function locked() {
+  while (busy) await sleep(1);   // wait for the lock (simple; real code queues waiters)
+  busy = true;
+  try { const v = bal; await sleep(10); bal = v + 10; }
+  finally { busy = false; }      // always release
+}
+```
+
+With the lock, the same two deposits ended at **120**. Always release in `finally`. Locks cost throughput (others wait) and, as the next lesson shows, can deadlock.
+
+### Real threads: data races
+
+Worker threads can share memory through `SharedArrayBuffer`. Two workers each incremented a shared counter 1 000 000 times:
+
+```text file=atomics.txt
+plain  a[0] = a[0] + 1  ->  final 1 445 296   (expected 2 000 000; varies each run)
+Atomics.add(a, 0, 1)    ->  final 2 000 000
+```
+
+The plain version lost about 28 percent of the increments: both threads read the same value and wrote back the same result. `Atomics.add` performs the read-modify-write as one indivisible step in hardware, so no update is lost and no lock is needed. The exact lost count varies from run to run; that variability is the signature of a race.
+
+CPU-bound work does speed up on real threads: a loop that took 337 ms on one worker took 195 ms split across two, a 1.73x speedup on a 2-core machine (not 2x: startup and scheduling cost).
+
+### Choosing a tool
+
+- **Avoid sharing**: give each worker its own data and combine results (message passing). The best fix is no shared mutable state.
+- **Atomic operations**: for a single variable (counters, flags, compare-and-swap). Fast, no waiting, limited to simple updates.
+- **Locks**: for protecting a multi-step invariant (move money between two accounts). Keep critical sections short, always release, and acquire multiple locks in a consistent order.
+- **The database**: for state shared between processes, use atomic SQL updates, row locks and transactions (B4), not in-memory locks, which only work inside one process.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Check-then-act: `if (!exists(id)) create(id)` with an await in between. Two requests both pass the check and both create. Make the check and the action one atomic step (a unique constraint, an atomic upsert, a lock).
+</Callout>
+
+- **Using an in-process lock** to protect state that several server instances share.
+- **Forgetting to release a lock** on an error path.
+- **Holding a lock across slow I/O**, serialising your whole service.
+- **"Fixing" a race with a sleep.**
+- **Testing once and calling it correct**: races are probabilistic; stress and repeat.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Locks are general but add waiting and deadlock risk. Atomics are fast and narrow. Message passing avoids shared state at the cost of copying and design effort. More parallelism gives speedup only for the parallel fraction of the work (Amdahl's law from the scaling chapter).
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Prefer database constraints and atomic statements for cross-request correctness, add timeouts to lock acquisition, test with concurrent load (many parallel requests against the same resource), and log lock wait time so contention shows up in your metrics.
+</Callout>
+
+## Check yourself
+
+<Exercise id="race-await" kind="predict" prompt="bal is 100. Two calls each run: read bal, await 10 ms, write read+10. Both start together. What is bal afterwards?" options={["120", "110", "100", "130"]} answer={1} explain="Both read 100 before either wrote, so both write 110. The await opened the race window even on one thread." />
+
+<Exercise id="race-atomic" kind="quiz" prompt="Why does Atomics.add avoid lost updates?" options={["It runs on a faster thread", "The read-modify-write happens as one indivisible operation", "It copies the array", "It sleeps between steps"]} answer={1} explain="Atomic operations cannot be interleaved by other threads, so each increment sees the previous result." />
+
+<Exercise id="race-cta" kind="debug" prompt="Two signup requests with the same email both succeed, creating duplicates. The code checks 'does the email exist' and then inserts. What is the robust fix?" options={["Check twice", "A unique constraint on email so the database enforces it atomically", "Add a sleep", "Use a bigger server"]} answer={1} explain="Check-then-act is racy. A unique constraint makes the check and the insert one atomic decision in the database." />
+
+<Exercise id="race-scope" kind="scenario" prompt="You protect a counter with an in-memory mutex and then run four server instances. What happens?" options={["It works across instances", "Each instance has its own mutex, so the instances can still race on shared data", "The mutex becomes global automatically", "The counter stops"]} answer={1} explain="An in-process lock protects only that process. Cross-instance state needs the database or another shared coordinator." />

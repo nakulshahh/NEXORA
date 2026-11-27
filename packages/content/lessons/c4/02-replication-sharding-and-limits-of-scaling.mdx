@@ -1,0 +1,98 @@
+---
+chapter: C4
+slug: replication-sharding-and-limits-of-scaling
+title: "Replication, sharding and the limits of scaling"
+order: 2
+summary: "When one database is not enough, you copy it (replication) for reads and availability, or split it (sharding) for writes and size. Each brings new failure modes, and the serial part of any workload caps the speedup."
+objectives:
+  - Explain primary-replica replication, read scaling and replication lag
+  - Describe sharding and why the choice of shard key and hashing method matter
+  - Compare modulo hashing and consistent hashing by the keys that move
+  - Use Amdahl's law to reason about the limit of adding machines
+concepts: [replication, replica, replication lag, sharding, shard key, consistent hashing, hot shard, Amdahl's law, vertical scaling]
+reading:
+  - title: "PostgreSQL docs: High availability, load balancing and replication"
+    url: "https://www.postgresql.org/docs/current/high-availability.html"
+  - title: "Wikipedia: Amdahl's law"
+    url: "https://en.wikipedia.org/wiki/Amdahl%27s_law"
+misconceptions:
+  - belief: "Read replicas always return the latest data."
+    correction: "Replication is usually asynchronous, so a replica can be behind the primary. A user who writes and immediately reads from a replica may not see their own change (read-your-writes violation)."
+  - belief: "Sharding is the natural next step when a database gets slow."
+    correction: "Sharding is a last resort: it complicates queries, transactions and operations. First fix queries and indexes, add caching, scale vertically, and add read replicas. Shard when write volume or data size genuinely exceeds one machine."
+---
+
+## Why it exists
+
+Caches and indexes stretch one database a long way, but eventually reads outnumber what one machine can serve, availability demands a standby, or the data simply no longer fits. There are two basic moves: **copy** the data, or **split** it.
+
+<Callout kind="why">
+Scaling data is harder than scaling stateless servers because data has to stay correct. Each technique trades some simplicity or consistency for capacity.
+</Callout>
+
+## How it works
+
+### Replication
+
+One **primary** accepts writes and streams its write-ahead log (from the first chapter of this part) to one or more **replicas**, which apply it and can serve read-only queries. Benefits: read capacity grows with replicas, a replica can be **promoted** if the primary fails, and backups or analytics can run on a replica.
+
+Costs: with asynchronous replication a replica lags the primary, by milliseconds normally and far more under load. Consequences to design for:
+
+- **Read-your-writes**: after a user saves something, read that user's data from the primary for a short while, or pass a position token.
+- **Stale reads** are acceptable for feeds and dashboards, not for balance checks.
+- **Failover** can lose the last few transactions if replication was asynchronous, and needs a mechanism to prevent two primaries ("split brain").
+
+Replication does not increase write capacity: every write still goes to one primary.
+
+### Sharding
+
+To scale writes and size, split rows across servers by a **shard key** (for example the user id). Each shard owns a slice. Costs: queries that cross shards are slow or impossible, joins and transactions across shards are hard, and resharding is painful. A poor key creates a **hot shard** (one celebrity user, or time-based keys sending all new writes to one shard).
+
+### Which shard owns a key?
+
+Simplest: `shard = hash(key) mod N`. The problem is changing N. Moving from 4 to 5 servers with 10 000 keys:
+
+```text file=remap.txt
+modulo hashing:                80.3% of keys moved
+consistent hashing (100 vnodes): 20.9% of keys moved   (ideal: 20%, i.e. 1/5)
+```
+
+**Consistent hashing** places servers (many virtual points each) on a ring and assigns each key to the next server clockwise, so adding a server takes keys from its neighbours only. It is used by caches and distributed stores because rebalancing moves a minimum of data.
+
+### The limits: Amdahl's law
+
+If a fraction `p` of the work can run in parallel, the speedup on `n` machines is `1 / ((1 - p) + p / n)`. At `n = 8`: p = 0.5 gives 1.78x, p = 0.9 gives 4.71x, p = 0.95 gives 5.93x. As `n` grows without bound, the speedup tops out at `1 / (1 - p)`: 2x, 10x, 20x. The serial part (a global lock, one coordinator, the primary database) caps everything. This is why finding and shrinking the serial bottleneck beats adding machines, and why "scale out" is not a magic word.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Reading from a replica right after a write and showing the user stale data. Route a user's reads to the primary briefly after they write, or design the UI to tolerate lag.
+</Callout>
+
+- **Sharding too early**, taking on large complexity for a problem an index would solve.
+- **Choosing a shard key with skew** (country, date) and creating hot shards.
+- **Assuming replicas are backups.** A bad `DELETE` replicates instantly; keep real backups.
+- **Mod-N hashing for a cache cluster**, so adding a node invalidates most of the cache.
+- **Ignoring failover testing**: a promotion procedure that was never rehearsed fails when needed.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Vertical scaling (a bigger machine) is the simplest and has a ceiling. Replication adds read capacity and availability with lag. Sharding adds write and storage capacity with large complexity. Choose the lightest option that covers the measured need.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Monitor replication lag and alert on it, rehearse failover, keep point-in-time backups independent of replicas, keep shard keys and routing logic in one place, and make resharding a planned, tested operation rather than an emergency.
+</Callout>
+
+## Check yourself
+
+<Exercise id="rep-lag" kind="scenario" prompt="A user updates their profile and immediately reloads, but sees the old data. Reads go to an asynchronous replica. What is happening?" options={["The update failed", "The replica has not yet applied the change (replication lag)", "The primary is read-only", "The cache is full"]} answer={1} explain="Asynchronous replicas can be behind. Read your own writes from the primary for a short time." />
+
+<Exercise id="shard-hash" kind="predict" prompt="You grow a cache cluster from 4 to 5 nodes using hash(key) mod N. About what fraction of keys changes node?" options={["About 20 percent", "About 50 percent", "About 80 percent", "None"]} answer={2} explain="Changing N remaps most keys under modulo hashing, around 80 percent here. Consistent hashing moves only about one fifth." />
+
+<Exercise id="amdahl" kind="predict" prompt="Only 50 percent of a job can run in parallel. What is the best possible speedup, even with unlimited machines?" options={["2x", "10x", "50x", "Unlimited"]} answer={0} explain="The serial half always remains, so the limit is 1 / (1 - 0.5) = 2." />
+
+<Exercise id="shard-when" kind="quiz" prompt="Which should usually come before sharding a slow database?" options={["Nothing, shard immediately", "Fix slow queries and indexes, add caching and read replicas, and scale vertically", "Delete old tables", "Switch to a bigger load balancer"]} answer={1} explain="Sharding is complex and hard to undo. Exhaust cheaper options and measure that one machine truly cannot cope." />

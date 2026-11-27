@@ -1,0 +1,92 @@
+---
+chapter: C1
+slug: alerts-slos-and-debugging
+title: "SLOs, alerts and a method for debugging production"
+order: 2
+summary: "Define what good service means as a measurable objective, alert on user-visible symptoms and error-budget burn, and debug production with a repeatable loop from symptom to cause using the signals you collected."
+objectives:
+  - Define an SLI and an SLO and compute an error budget
+  - Write alerts on symptoms, with severity and a runbook link
+  - "Apply a debugging loop: scope, compare, hypothesise, test, fix"
+  - Write a blameless postmortem with actions
+concepts: [SLI, SLO, error budget, alert, runbook, on-call, postmortem, blameless, burn rate]
+reading:
+  - title: "Google SRE Book: Service Level Objectives"
+    url: "https://sre.google/sre-book/service-level-objectives/"
+  - title: "Google SRE Workbook: Alerting on SLOs"
+    url: "https://sre.google/workbook/alerting-on-slos/"
+misconceptions:
+  - belief: "A good service targets 100 percent availability."
+    correction: "100 percent is unreachable and enormously expensive, and users cannot tell 99.99 from 100 through their own network. Choose an objective that matches user needs and spend the remaining error budget on shipping changes."
+  - belief: "Alert on every metric that looks abnormal so nothing is missed."
+    correction: "Noisy alerts train people to ignore them. Page only on things that need a human now and are user-visible; send the rest to tickets or dashboards."
+---
+
+## Why it exists
+
+Without a target you argue about whether the service is "fast enough" or "reliable enough" forever. Service-level objectives turn that into arithmetic, and a debugging method turns a 3 a.m. page into a sequence of steps instead of a panic.
+
+<Callout kind="why">
+Reliability is a feature with a budget. An SLO says how much unreliability is acceptable, which is also how much risk you may take with new releases.
+</Callout>
+
+## How it works
+
+### SLI, SLO, error budget
+
+- **SLI** (indicator): a measured ratio of good events to all events, such as "requests that return non-5xx within 300 ms".
+- **SLO** (objective): the target for the SLI over a window, such as 99.5 percent over 28 days.
+- **Error budget**: 100 percent minus the SLO. At 99.5 percent over 28 days, the budget is 0.5 percent of requests, or about 3.4 hours of total unavailability (28 days is 672 hours; 0.5 percent of that is 3.36 hours).
+
+When the budget is healthy, ship faster. When it is spent, slow down and invest in reliability. This is how the product and operations sides negotiate with numbers.
+
+### Alerting that people respect
+
+Alert on **symptoms** users feel: error rate, latency percentiles, saturation approaching a limit, and **burn rate** (how fast the budget is being consumed: a fast burn pages, a slow burn opens a ticket). Do not page on causes ("CPU is 80 percent") unless they predict an imminent symptom. Each page needs a severity, an owner and a **runbook** link: what this alert means, how to check, and the first safe actions. If an alert fires and requires no action, delete or downgrade it.
+
+### A debugging loop
+
+1. **Scope**: who and what is affected? One route, one region, one customer, everyone? Use metrics sliced by those dimensions.
+2. **Compare**: what changed? A deploy, a config change, a traffic spike, a dependency incident, an expired certificate. Check the deploy timeline first; most incidents follow a change.
+3. **Hypothesise** from the signals: errors up with latency up suggests a slow dependency; errors with flat latency suggests a bad deploy.
+4. **Test cheaply**: look at traces and logs for affected request ids; compare a failing and a succeeding request.
+5. **Mitigate before you perfect**: roll back, turn off a feature flag, shed load. Restore service first, find the root cause after.
+6. **Verify** the metric recovered, then write it up.
+
+### Postmortems
+
+After a significant incident write a **blameless** postmortem: timeline, impact, root causes (plural; there is rarely one), what went well, what was lucky, and action items with owners and dates. Blameless means asking "what let this happen" rather than "who did it". Track the actions to completion, otherwise the document changes nothing.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Treating the postmortem action list as a wish list. Unowned, undated actions never happen and the same incident returns.
+</Callout>
+
+- **Objectives set without looking at actual user needs or current performance.**
+- **Paging on causes** and getting woken for harmless events.
+- **No runbook**, so every page is a fresh investigation.
+- **Fixing before mitigating**, extending the outage.
+- **Skipping the postmortem for "small" incidents** where the lessons are cheapest.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Tighter SLOs cost more engineering and slow feature work; looser ones accept more user pain. Sensitive alerts catch problems early and risk fatigue. The right setting is the one users and on-call engineers can live with, revisited each quarter.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Start with two or three SLOs (availability and latency of the main user journeys), burn-rate alerts with a fast and a slow window, a rotation with a handover note, a shared incident channel template, and a calendar slot to review action items.
+</Callout>
+
+## Check yourself
+
+<Exercise id="slo-budget" kind="predict" prompt="An SLO is 99.5 percent over 28 days. Roughly how much total downtime does the error budget allow?" options={["About 3.4 hours", "About 34 hours", "About 20 minutes", "None"]} answer={0} explain="28 days is 672 hours, and 0.5 percent of that is about 3.4 hours." />
+
+<Exercise id="slo-alert" kind="quiz" prompt="Which alert is best to page a human at night?" options={["CPU above 80 percent for one minute", "Error rate far above the SLO budget burn rate, affecting users", "A deploy finished", "Disk usage changed"]} answer={1} explain="Page on user-visible symptoms and fast budget burn, not on causes that may be harmless." />
+
+<Exercise id="slo-loop" kind="scenario" prompt="Errors spike five minutes after a deploy. What is the right first move?" options={["Write a long analysis", "Roll back or disable the change to restore service, then investigate", "Add more servers", "Ignore it"]} answer={1} explain="Mitigate first. Rolling back is the fastest safe action when the change is the likely cause." />
+
+<Exercise id="slo-blame" kind="quiz" prompt="What does 'blameless' mean in a postmortem?" options={["Nobody is responsible for anything", "Focus on the system and process conditions that allowed the failure, not on punishing a person", "Skip the timeline", "No action items"]} answer={1} explain="Blameless reviews ask what allowed the incident, which finds fixable causes and keeps people honest about what happened." />

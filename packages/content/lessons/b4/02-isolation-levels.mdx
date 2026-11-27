@@ -1,0 +1,124 @@
+---
+chapter: B4
+slug: isolation-levels
+title: "Isolation levels, anomalies and lost updates"
+order: 2
+summary: "Isolation decides what concurrent transactions can see of each other. Weaker levels allow anomalies like non-repeatable reads, lost updates and write skew; you choose a level and a locking technique to prevent the ones that matter."
+objectives:
+  - Distinguish read committed, repeatable read and serializable in PostgreSQL
+  - Recognise a non-repeatable read, a lost update and write skew
+  - Prevent lost updates with atomic updates or SELECT FOR UPDATE
+  - Handle serialization failures by retrying the whole transaction
+concepts: [isolation level, read committed, repeatable read, serializable, lost update, write skew, row lock, SELECT FOR UPDATE, retry]
+reading:
+  - title: "PostgreSQL docs: Transaction Isolation"
+    url: "https://www.postgresql.org/docs/current/transaction-iso.html"
+  - title: "PostgreSQL docs: Explicit Locking"
+    url: "https://www.postgresql.org/docs/current/explicit-locking.html"
+misconceptions:
+  - belief: "Wrapping read-modify-write code in a transaction prevents lost updates."
+    correction: "At PostgreSQL's default read committed level, two transactions can both read 100, both write 110, and one increment is lost. You need an atomic UPDATE, a row lock, or a stricter isolation level."
+  - belief: "Serializable is slow and nobody should use it."
+    correction: "Serializable gives the strongest guarantee and is the simplest to reason about. It may abort a transaction with a serialization error, so the price is retry logic and some throughput, not necessarily slowness."
+---
+
+## Why it exists
+
+Transactions running one after another are easy to reason about. Real systems run thousands at once, and running them truly one at a time would be too slow. **Isolation levels** are the dial between "safe like serial" and "fast with surprises".
+
+<Callout kind="why">
+Most concurrency bugs in web backends are not exotic. They are check-then-act code (read a value, decide, write) running in two requests at once.
+</Callout>
+
+## How it works
+
+PostgreSQL uses MVCC: each statement or transaction sees a **snapshot** of committed data. The level determines *when* the snapshot is taken.
+
+- **Read committed** (default): each statement sees what was committed when *it* started.
+- **Repeatable read**: the whole transaction sees the snapshot from its first statement.
+- **Serializable**: behaves as if transactions ran one at a time; the database aborts any that would break that illusion.
+
+Everything below was run against PostgreSQL 16 with two sessions.
+
+### Non-repeatable read
+
+Session A reads a balance of 100. Session B commits a change to 200. Session A reads again:
+
+```text file=nonrepeatable.txt
+read committed:   100 -> 200   (the value changed inside one transaction)
+repeatable read:  100 -> 100   (same snapshot all the way)
+```
+
+### Lost update
+
+Both sessions read 100, both compute 110 and write. The final balance should be 120 but is:
+
+```text file=lostupdate.txt
+read committed:   final 110                       (one increment silently lost)
+repeatable read:  final 110, and the second writer got
+                  "could not serialize access due to concurrent update"
+```
+
+Under repeatable read the database noticed and refused, so you can retry. Under the default level it quietly lost data. Two fixes avoid the problem at any level:
+
+```sql file=fixes.sql mark=1,4
+UPDATE acct SET bal = bal + 10 WHERE id = 1;     -- atomic: final 120 in the test
+
+BEGIN;
+SELECT bal FROM acct WHERE id = 1 FOR UPDATE;    -- the second session waits here
+UPDATE acct SET bal = ... WHERE id = 1;          -- final 120 in the test
+COMMIT;
+```
+
+An atomic update lets the database do the arithmetic under a row lock. `FOR UPDATE` locks the row after reading it so competing writers queue.
+
+### Write skew
+
+Rule: at least one person must be on call. Alice and Bob are both on call. Each transaction checks "is more than one on call?", sees two, and takes themselves off. They touch *different rows*, so row locks do not conflict:
+
+```text file=writeskew.txt
+repeatable read:  both saw 2, both committed, on call afterwards: 0   (rule broken)
+serializable:     both saw 2, one commit failed with
+                  "could not serialize access due to read/write dependencies
+                   among transactions", on call afterwards: 1
+```
+
+Only serializable detected the invalid combination. Alternatives are to lock the rows you read (`SELECT ... FOR UPDATE` on the on-call set) or to enforce the rule with a constraint where possible.
+
+### Retrying
+
+Serialization failures and deadlocks are normal at higher levels. The correct response is to **retry the whole transaction** from `BEGIN`, a bounded number of times with jitter, and only if its side effects are all inside the database.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Read-modify-write in application code under the default level: select the value, add in JavaScript, update. It works in tests and loses data under concurrency.
+</Callout>
+
+- **Believing "I used a transaction" means "I am safe".** Safety depends on the level and the access pattern.
+- **Using serializable without retry logic**, so users see errors.
+- **Retrying only the failed statement** rather than the whole transaction.
+- **Locking rows in inconsistent order**, which causes deadlocks.
+- **Enforcing uniqueness by check-then-insert** instead of a unique constraint.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Stronger isolation removes whole classes of bugs but increases aborts and coordination. Weaker isolation is cheaper but moves correctness into your code. A good default is read committed with atomic updates, unique constraints and targeted `FOR UPDATE`, using serializable for the few invariants that span several rows.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Prefer database-enforced rules (unique, foreign key, check) over application checks, make updates atomic expressions where possible, count and alert on serialization failures and deadlocks, and test concurrency with two parallel sessions or a load tool, not just unit tests.
+</Callout>
+
+## Check yourself
+
+<Exercise id="iso-default" kind="quiz" prompt="Which isolation level does PostgreSQL use by default?" options={["Serializable", "Repeatable read", "Read committed", "Read uncommitted"]} answer={2} explain="PostgreSQL defaults to read committed. Each statement sees data committed before that statement started." />
+
+<Exercise id="iso-lost" kind="predict" prompt="Two requests each read balance 100, add 10 in application code and write back, at read committed. What is the final balance?" options={["120", "110, one update is lost", "100", "The second request errors"]} answer={1} explain="Both computed 110 from the same old value, so the second write overwrote the first. An atomic UPDATE bal = bal + 10 gives 120." />
+
+<Exercise id="iso-skew" kind="scenario" prompt="At least one doctor must stay on call. Two doctors each check the count, see two, and go off call at the same time. Which technique reliably prevents zero on call?" options={["Add an index", "Serializable isolation with retry, or locking the rows that were read", "A larger connection pool", "Reading twice"]} answer={1} explain="The transactions write different rows, so ordinary row locks do not conflict. Serializable detects the dependency; locking the read set also works." />
+
+<Exercise id="iso-retry" kind="debug" prompt="A serializable transaction fails with a serialization error. The code retries only the last UPDATE. What is wrong?" options={["Nothing", "The transaction was aborted; the whole transaction, including its reads, must be rerun from BEGIN", "UPDATE cannot be retried", "It should switch to read committed"]} answer={1} explain="The decision depended on earlier reads that may now be stale. Rerun the whole unit of work on a fresh snapshot." />

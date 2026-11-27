@@ -1,0 +1,93 @@
+---
+chapter: C1
+slug: logs-metrics-and-traces
+title: "Logs, metrics and traces"
+order: 1
+summary: "Observability is the ability to ask new questions about a running system. Structured logs tell you what happened, metrics tell you how much and how fast, and traces show where time went across services."
+objectives:
+  - State what logs, metrics and traces are each good for
+  - Write structured logs with a request id and avoid logging secrets
+  - Explain why averages hide problems and percentiles reveal them
+  - Know the RED and USE methods for choosing what to measure
+concepts: [observability, structured logging, request id, metric, percentile, histogram, trace, span, RED method, USE method]
+reading:
+  - title: "Google SRE Book: Monitoring Distributed Systems"
+    url: "https://sre.google/sre-book/monitoring-distributed-systems/"
+  - title: "OpenTelemetry: Observability primer"
+    url: "https://opentelemetry.io/docs/concepts/observability-primer/"
+misconceptions:
+  - belief: "Average response time tells you how fast the service is."
+    correction: "Averages hide the slow tail. A service where 2 percent of requests take a second can have a healthy-looking mean while one in fifty users suffers. Use percentiles such as p95 and p99."
+  - belief: "More logging always means better debugging."
+    correction: "Unstructured, unbounded logs are costly and hard to search, and they leak personal data and secrets. Log events with consistent fields, at sensible levels, with a request id to join them."
+---
+
+## Why it exists
+
+In production you cannot attach a debugger. When a user says "it was slow at 21:14", the only evidence is what the system recorded. Observability is designing that evidence in advance so that new questions can be answered without a new deploy.
+
+<Callout kind="why">
+Three signals answer three questions. Metrics: is something wrong, and how badly? Traces: where is the time going? Logs: what exactly happened in this case?
+</Callout>
+
+## How it works
+
+### Logs: events with context
+
+Write **structured** logs: one JSON object per line with consistent fields, so tools can filter and aggregate.
+
+```json file=log.json mark=1
+{"level":"info","time":"2026-11-25T15:44:02Z","reqId":"a1b2c3d4e5","route":"POST /v1/orders","status":201,"ms":42,"userId":"u_81"}
+```
+
+The **request id** is the key: generate or accept one at the edge, include it in every log line and pass it to downstream calls (this project's API echoes `X-Request-Id` and forwards it to the AI service), so one id joins everything a request touched across services. Use levels: `error` for things needing attention, `warn` for recoverable oddities, `info` for normal events, `debug` off by default. Never log passwords, tokens, full card numbers or whole request bodies; log identifiers, not content.
+
+### Metrics: numbers over time
+
+A **metric** is a number sampled over time: counters (requests total), gauges (queue length, memory) and **histograms** (distribution of durations). Metrics are cheap to store and fast to alert on. The important lesson is what to summarise. For 10 000 request times where 2 percent were slow (800 to 1200 ms) and the rest were 20 to 40 ms, in a seeded example:
+
+```text file=pct.txt
+mean 48.9 ms   p50 30.2   p95 39.4   p99 1003.4   max 1197
+```
+
+The mean looks fine and the p50 and p95 look excellent, but p99 is a full second: one user in a hundred waits 33 times longer than the typical user. A user who makes many requests per page meets the tail often, so **tail latency** matters more than the average. Alert on p95 or p99, not the mean.
+
+What to measure: the **RED** method for request-driven services (Rate, Errors, Duration) and the **USE** method for resources (Utilisation, Saturation, Errors: CPU, memory, connection pool, queue depth).
+
+### Traces: where did the time go
+
+A **trace** follows one request across services as a tree of **spans**, each with a start, a duration and attributes: the API span contains a database span and an HTTP span to another service. A waterfall view shows immediately that 380 of 400 ms were spent in one downstream call. Tracing requires passing a trace context (a header such as `traceparent`) along every call, and it is usually **sampled** (keep 1 percent of requests, plus all errors) to control cost. OpenTelemetry is the vendor-neutral standard for emitting all three signals.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Alerting on the average or on a single noisy log line. Alert on symptoms users feel (error rate, tail latency, saturation), not on every possible cause.
+</Callout>
+
+- **No request id**, so logs from one request cannot be joined.
+- **Logging at debug level in production**, producing a flood and a bill.
+- **High-cardinality metric labels** (a label per user id) that explode storage; use logs or traces for per-user detail.
+- **Logging secrets or personal data.**
+- **Dashboards nobody looks at** and alerts that always fire, which teach people to ignore alerts.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+More detail costs money and performance: verbose logs, more metric series and full tracing all add overhead and storage. Sample traces, keep metric labels low-cardinality, retain logs for a limited period, and spend the detail where decisions are made.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Write health and readiness endpoints that do not call heavy dependencies, define a few service-level objectives (for example, 99 percent of requests under 300 ms), alert on error budget burn rather than raw spikes, and make sure every on-call alert links to a runbook and to a dashboard filtered to the affected service.
+</Callout>
+
+## Check yourself
+
+<Exercise id="obs-pct" kind="predict" prompt="Out of 10 000 requests, 2 percent take about one second and the rest about 30 ms. Which statistic best reveals the problem?" options={["The mean", "The p50", "The p99", "The minimum"]} answer={2} explain="The mean and median look healthy. The 99th percentile falls inside the slow 2 percent and exposes the tail." />
+
+<Exercise id="obs-reqid" kind="scenario" prompt="A user reports an error at 21:14. Which single piece of data lets you find every log line across services for that request?" options={["The server's IP", "A request id carried through all services", "The CPU temperature", "The browser version"]} answer={1} explain="A request id attached to each log line and forwarded downstream joins the whole request's activity." />
+
+<Exercise id="obs-signal" kind="quiz" prompt="Which signal best shows which downstream call consumed most of a request's 400 ms?" options={["A counter", "A trace", "A gauge", "A metric label"]} answer={1} explain="A trace breaks one request into timed spans across services, showing where the time went." />
+
+<Exercise id="obs-card" kind="debug" prompt="After adding a user_id label to a request counter, the metrics system slows and its bill triples. Why?" options={["Counters are slow", "Each distinct user creates its own time series (high cardinality)", "Labels are encrypted", "The label name is too long"]} answer={1} explain="Every unique label value is a separate series. Keep labels to small sets such as route and status." />

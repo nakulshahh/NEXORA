@@ -1,0 +1,132 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* ───────────────────────── Identity: "signal on substrate" ─────────────────────────
+   Light = paper & ink. Dark = oscilloscope-black. One loud colour — the signal —
+   is the packet travelling through everything. A cool "trace" colour marks wires. */
+:root {
+  color-scheme: light;
+  --bg: #f3f0e8;
+  --bg-2: #ebe7db;
+  --surface: #fbf9f3;
+  --ink: #12110e;
+  --ink-2: #4a463e;      /* 7.6:1 on bg */
+  --ink-3: #6f6a5f;      /* 4.6:1 on bg, large/secondary only */
+  --line: #d6d0c0;
+  --line-strong: #b9b2a0;
+  --signal: #e5461c;     /* graphics, large display */
+  --signal-ink: #b9330f; /* text-safe */
+  --signal-wash: #f6dccf;
+  --trace: #2c3da6;
+  --trace-wash: #dfe2f4;
+  --ok: #1b7a52;
+  --warn: #946000;
+  --code-bg: #14130f;
+  --code-ink: #ece8dc;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0a0b0e;
+  --bg-2: #101217;
+  --surface: #14161c;
+  --ink: #ece8de;
+  --ink-2: #aaa699;
+  --ink-3: #8a867b;
+  --line: #242730;
+  --line-strong: #353945;
+  --signal: #ff6b3d;
+  --signal-ink: #ff8a63;
+  --signal-wash: #2b1a14;
+  --trace: #93a5ff;
+  --trace-wash: #1a1e33;
+  --ok: #55d8a3;
+  --warn: #f0b84a;
+  --code-bg: #0e1015;
+  --code-ink: #ece8de;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-2: var(--bg-2);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-signal: var(--signal);
+  --color-signal-ink: var(--signal-ink);
+  --color-signal-wash: var(--signal-wash);
+  --color-trace: var(--trace);
+  --color-trace-wash: var(--trace-wash);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --font-display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+html { background: var(--bg); scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: clip;
+}
+::selection { background: var(--signal); color: #fff; }
+:focus-visible { outline: 2px solid var(--trace); outline-offset: 3px; border-radius: 4px; }
+
+/* Type helpers */
+.font-display { font-family: var(--font-display); font-weight: 400; letter-spacing: -0.015em; }
+.eyebrow {
+  font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--ink-2);
+}
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* Surfaces */
+.dot-grid {
+  background-image: radial-gradient(var(--line-strong) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+.hairline { border: 1px solid var(--line); }
+
+/* Animated underline link */
+.u-link { background: linear-gradient(currentColor, currentColor) 0 100% / 0 1px no-repeat; transition: background-size .4s var(--ease-out-expo); }
+.u-link:hover, .u-link:focus-visible { background-size: 100% 1px; }
+
+/* Route-change curtain: pure CSS so it runs before hydration and never blocks input. */
+@keyframes curtain { from { transform: scaleY(1); } to { transform: scaleY(0); } }
+.route-curtain {
+  position: fixed; inset: 0; z-index: 60; pointer-events: none;
+  background: var(--ink); transform-origin: top; transform: scaleY(0);
+  animation: curtain .7s var(--ease-out-expo) both; animation-delay: .02s;
+}
+.route-curtain[data-first="true"] { display: none; }
+
+/* Packet pulse used on live nodes */
+@keyframes ping-ring { 0% { transform: scale(.6); opacity: .7; } 100% { transform: scale(2.2); opacity: 0; } }
+@keyframes node-ping { 0% { transform: scale(1); opacity: .55; } 100% { transform: scale(1.22); opacity: 0; } }
+@keyframes dash-flow { to { stroke-dashoffset: -24; } }
+@keyframes blink { 50% { opacity: 0; } }
+.caret::after { content: "▍"; animation: blink 1s steps(1) infinite; color: var(--signal); margin-left: 1px; }
+
+/* Code surfaces */
+.code { background: var(--code-bg); color: var(--code-ink); font-family: var(--font-mono); }
+.tok-k { color: #ff8a63; } .tok-s { color: #9fe3b8; } .tok-c { color: #77736a; font-style: italic; }
+.tok-f { color: #93a5ff; } .tok-n { color: #f0b84a; }
+
+/* Hide scrollbars on horizontal chip rows without losing scrollability */
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .route-curtain { display: none; }
+  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+}

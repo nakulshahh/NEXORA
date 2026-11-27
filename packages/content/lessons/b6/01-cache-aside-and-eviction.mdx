@@ -1,0 +1,109 @@
+---
+chapter: B6
+slug: cache-aside-and-eviction
+title: "Caching with Redis: cache-aside, TTLs and eviction"
+order: 1
+summary: "A cache keeps hot answers in fast memory. The cache-aside pattern, a time-to-live and an eviction policy decide what stays, what goes and how stale an answer may be."
+objectives:
+  - Implement cache-aside and explain hits, misses and the hit rate
+  - Predict how hit rate depends on cache size and on how skewed the traffic is
+  - Compare Redis eviction policies and the noeviction failure mode
+  - Choose a time-to-live as a deliberate staleness budget
+concepts: [cache, cache-aside, hit rate, TTL, LRU, eviction, Redis, maxmemory, working set]
+reading:
+  - title: "Redis docs: Key eviction"
+    url: "https://redis.io/docs/latest/develop/reference/eviction/"
+  - title: "Redis docs: EXPIRE"
+    url: "https://redis.io/docs/latest/commands/expire/"
+misconceptions:
+  - belief: "A bigger cache always gives a proportionally better hit rate."
+    correction: "Hit rate depends on how skewed the traffic is. With a few hot keys, a tiny cache wins a lot; with uniform traffic a cache of 10 percent of the keys hits only about 10 percent of the time."
+  - belief: "When Redis is full it just removes old data."
+    correction: "That depends on maxmemory-policy. With allkeys-lru it evicts; with noeviction it refuses writes with an out-of-memory error, which can take down a feature that assumed writes always succeed."
+---
+
+## Why it exists
+
+A database query costs milliseconds and real work; reading a value from memory costs microseconds. If many requests ask for the same thing, computing it once and remembering the answer removes most of the load. A cache is a deliberate trade: **speed and fewer database queries in exchange for possibly stale data and one more thing to operate**.
+
+<Callout kind="why">
+A cache is only worth having when the same data is read much more often than it changes. Measure that first; a cache in front of data nobody re-reads adds latency and complexity for nothing.
+</Callout>
+
+## How it works
+
+### Cache-aside
+
+The application owns the logic. Read: look in the cache; on a **hit** return it; on a **miss** read the database, store the result in the cache with an expiry, return it. Write: change the database, then delete (or update) the cached entry.
+
+```ts file=cache-aside.ts mark=2,3,5,6
+async function getUser(id: string) {
+  const hit = await redis.get(`user:${id}`);
+  if (hit) return JSON.parse(hit);
+  const row = await db.user.find(id);
+  await redis.set(`user:${id}`, JSON.stringify(row), "EX", 60);
+  return row;
+}
+```
+
+The **hit rate** (hits divided by requests) tells you whether it is working.
+
+### Hit rate depends on the traffic
+
+Replaying 200 000 requests over 10 000 keys through a least-recently-used cache in a seeded simulation (Zipf-skewed traffic, where a few keys are much hotter than the rest):
+
+| Cache capacity (of 10 000 keys) | Hit rate |
+| --- | --- |
+| 10 | 13.2% |
+| 100 | 39.2% |
+| 1 000 | 67.5% |
+| 5 000 | 88.6% |
+
+Holding 1% of the keys already caught 39% of requests. With **uniform** traffic (every key equally likely), a cache of 1 000 keys hit only 9.9%, as arithmetic predicts. Skew is what makes caches work, so look at your real access pattern before sizing one.
+
+### Eviction
+
+Memory is finite. On a real Redis 7.0 with `maxmemory 2mb`, writing 3 000 values of about 1 KB each:
+
+- `allkeys-lru`: 973 keys remained and 2 050 were evicted. Writes kept succeeding.
+- `noeviction`: after about 940 keys, writes failed with `OOM command not allowed when used memory > 'maxmemory'`.
+
+Common policies: **LRU** (drop the least recently used), **LFU** (least frequently used), **volatile-*** (only keys that have a TTL), **random**. Choose by what your data looks like, and decide deliberately whether Redis is a cache (evict) or a store (refuse).
+
+### Time-to-live
+
+`SET key value EX 2` expires the key after two seconds; reading it afterwards returned nil in the test. A TTL is your **staleness budget**: how long a reader may see an old value. It also bounds the damage of any missed invalidation.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Treating the cache as the source of truth. It can be flushed, evicted or restarted at any time; the application must work, only slower, with an empty cache.
+</Callout>
+
+- **No TTL**, so an invalidation bug serves wrong data forever.
+- **Caching per-user data under a shared key**, leaking one user's data to another.
+- **Caching errors or empty results** for too long.
+- **Counting on the cache for correctness** (counters, locks) without atomic commands. Redis `INCR` is atomic; read-then-write in your code is not.
+- **No hit-rate metric**, so nobody notices when the cache stops helping.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+More cache means fewer database reads but more memory cost and more staleness risk. A short TTL is safer and less effective; a long one is the reverse. Eviction trades completeness for a bounded memory footprint.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Export hit rate, evictions, memory use and latency; set an explicit `maxmemory` and policy; namespace and version keys (`user:v2:42`); and load-test with the cache empty, because that is the state after every restart and deploy.
+</Callout>
+
+## Check yourself
+
+<Exercise id="cache-pattern" kind="quiz" prompt="In cache-aside, what does the application do on a cache miss?" options={["Returns an error", "Reads the database, stores the result in the cache, then returns it", "Deletes the database row", "Waits for the cache to fill itself"]} answer={1} explain="The application loads from the source of truth and populates the cache so the next request can hit." />
+
+<Exercise id="cache-skew" kind="predict" prompt="Traffic is uniform over 10 000 keys and the cache holds 1 000. Roughly what hit rate should you expect?" options={["About 10 percent", "About 50 percent", "About 90 percent", "100 percent"]} answer={0} explain="With uniform access each request has a 1 000 in 10 000 chance of asking for a cached key. Caches pay off when traffic is skewed." />
+
+<Exercise id="cache-oom" kind="debug" prompt="After a traffic spike, SET commands fail with 'OOM command not allowed'. What is the likely configuration?" options={["maxmemory-policy is noeviction and memory is full", "TTL is too long", "The key names are too short", "Redis is read-only by design"]} answer={0} explain="With noeviction Redis rejects writes once memory is full. Use an evicting policy if it is a cache, or add memory and alerts if it is a store." />
+
+<Exercise id="cache-ttl" kind="scenario" prompt="Prices change a few times a day, and showing a price up to five minutes old is acceptable. How should you set the cache?" options={["No TTL, invalidate by hand", "A TTL of about five minutes, plus deleting the key on price changes", "A TTL of one year", "Do not cache"]} answer={1} explain="A TTL expresses the staleness budget and caps the damage of a missed invalidation; deleting on write makes updates visible sooner." />

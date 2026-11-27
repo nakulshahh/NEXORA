@@ -1,0 +1,74 @@
+---
+chapter: F4
+slug: designing-a-notification-system
+title: "Design: a notification system"
+order: 1
+summary: "Deliver email, push and in-app messages reliably without duplicates or floods. Queue the work, make sends idempotent, respect user preferences, and handle provider failures with retries and dead letters."
+objectives:
+  - Decouple triggering from delivery with a queue
+  - Make sends idempotent so retries do not duplicate messages
+  - Apply preferences, quiet hours and rate limits per user
+  - Handle provider failure with backoff and a dead-letter queue
+concepts: [notification, queue, idempotency key, preference, template, provider, backoff, dead-letter queue, fan-out, at-least-once]
+reading:
+  - title: "Amazon SQS: dead-letter queues"
+    url: "https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html"
+  - title: "Stripe: Idempotent requests"
+    url: "https://docs.stripe.com/api/idempotent_requests"
+misconceptions:
+  - belief: "Sending the email inside the request handler is fine."
+    correction: "The provider can be slow or down, which would make your user-facing request slow or failing. Enqueue and return; send in a worker."
+  - belief: "At-least-once delivery means users get exactly one message."
+    correction: "At-least-once means duplicates are possible after retries or crashes. Exactly-once effect needs an idempotency key checked at send time."
+---
+
+## Why it exists
+
+Many events (signup, order shipped, password reset) must tell a user something, by channels with different speeds and failure modes.
+
+<Callout kind="why">
+It combines queues (B7), events (D5), retries and preferences into one realistic system.
+</Callout>
+
+## How it works
+
+1. **Trigger**: a service records an event and enqueues a notification job (ideally with the outbox pattern, so the event and the job commit together).
+2. **Worker** loads the user's preferences, picks channel(s) and a template, and checks quiet hours and per-user rate limits.
+3. **Send** to the provider (email service, push gateway) with a **deduplication key** such as `userId:eventId:channel`. Store the key and result so a retried job does not send twice.
+4. **Retry** transient failures with exponential backoff and jitter (B7); after a limit, move to a **dead-letter queue** for inspection.
+5. **Track** status (queued, sent, delivered, failed, bounced) and handle provider callbacks and unsubscribes.
+
+Priority matters: password resets and security alerts use a fast queue; marketing digests use a slow, batched one, so a campaign cannot delay a login code.
+
+Scale: a campaign to 5 million users is a fan-out job; chunk it, rate-limit to the provider's quota and spread over time.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Retrying a send after a timeout without a dedup key. The first attempt may have succeeded, and the user gets two emails.
+</Callout>
+
+- **Sending in the request path.**
+- **One queue for urgent and bulk messages.**
+- **Ignoring unsubscribe and bounce signals**, damaging sender reputation.
+- **Putting secrets or full personal data in queue messages.**
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+At-least-once with dedup is simpler and robust; true exactly-once is rarely available end to end. Batching saves cost and delays delivery.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Alert on queue age and dead-letter growth, monitor provider error rates, keep templates versioned and test with a sandbox provider.
+</Callout>
+
+## Check yourself
+
+<Exercise id="nt-dedup" kind="scenario" prompt="A worker crashes after the provider accepted an email but before recording success. The job retries. How do you avoid a duplicate?" options={["Hope", "Send with a stable idempotency key and check stored results", "Never retry", "Send twice deliberately"]} answer={1} explain="A stable key lets the provider or your store recognise the repeat." />
+
+<Exercise id="nt-prio" kind="quiz" prompt="Why separate queues for urgent and bulk notifications?" options={["Style", "A bulk campaign should not delay time-critical messages", "Cost only", "Required by SMTP"]} answer={1} explain="Isolation stops head-of-line blocking." />
+
+<Exercise id="nt-dlq" kind="debug" prompt="A malformed job fails forever and blocks processing. What pattern helps?" options={["Infinite retries", "Retry limit then a dead-letter queue", "Delete the queue", "Restart the server"]} answer={1} explain="After bounded retries, park the job for inspection." />

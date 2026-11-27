@@ -1,0 +1,104 @@
+---
+chapter: B3
+slug: reading-explain
+title: "Reading EXPLAIN: how to see what the database actually does"
+order: 2
+summary: "EXPLAIN shows the plan the database chose; EXPLAIN ANALYZE runs it and reports real timings and row counts. Learning to read these is how you replace guessing about slow queries with evidence."
+objectives:
+  - "Tell EXPLAIN (estimates) apart from EXPLAIN ANALYZE (actual execution)"
+  - "Identify scan types: sequential, index and bitmap"
+  - Compare estimated and actual row counts to find stale statistics
+  - "Follow a fix loop: measure, change one thing, measure again"
+concepts: [EXPLAIN, EXPLAIN ANALYZE, query plan, sequential scan, index scan, bitmap scan, statistics, ANALYZE, buffers]
+reading:
+  - title: "PostgreSQL docs: Using EXPLAIN"
+    url: "https://www.postgresql.org/docs/current/using-explain.html"
+  - title: "PostgreSQL docs: Planner statistics"
+    url: "https://www.postgresql.org/docs/current/planner-stats.html"
+misconceptions:
+  - belief: "Plain EXPLAIN shows how long a query took."
+    correction: "EXPLAIN only shows the plan with estimated costs and does not run the query. EXPLAIN ANALYZE executes it and adds real times and row counts. Be careful: ANALYZE on a data-changing statement really changes the data, so wrap it in a transaction and roll back."
+  - belief: "If the plan uses a sequential scan, something is broken."
+    correction: "A sequential scan is the best plan for small tables or when most rows are needed. It is a problem only when a selective query scans a big table, which the plan and the row counts make visible."
+---
+
+## Why it exists
+
+"The query is slow" is not a diagnosis. The database already knows how it will run a query. `EXPLAIN` lets you look, so you can fix the actual cause instead of adding indexes at random.
+
+<Callout kind="why">
+Performance work is a loop: observe the plan, form a hypothesis, change one thing, observe again. Without the plan you are guessing.
+</Callout>
+
+## How it works
+
+A plan is a tree of operations, read from the innermost, most-indented node outwards. Each node shows how rows are produced, and with `ANALYZE` it reports actual time and rows.
+
+```text file=plan.txt mark=1,2,3
+Seq Scan on users (actual time=56.645..98.465 rows=1 loops=1)
+  Filter: (email = 'user500000@example.com'::text)
+  Rows Removed by Filter: 1000000
+Execution Time: 98.491 ms
+```
+
+Read it: the database scanned the table, threw away a million rows and kept one. "Rows Removed by Filter" in the millions beside `rows=1` is the signature of a missing index.
+
+After creating an index on `email`:
+
+```text file=plan2.txt mark=1
+Index Scan using users_email_idx on users (actual time=0.028..0.029 rows=1 loops=1)
+Execution Time: 0.036 ms
+```
+
+### Common nodes
+
+- **Seq Scan**: read every page. Good when you need most rows.
+- **Index Scan**: walk the index, fetch each matching row from the table.
+- **Bitmap Heap Scan**: collect matching row locations from an index first, then read the pages in order. Used when many rows match, like the 200 001-row country filter, which still read all 22 213 pages.
+- **Joins**: nested loop, hash join, merge join, chosen by the planner from size estimates.
+
+Add `BUFFERS` to see page hits (found in memory) and reads (from disk).
+
+### Estimates versus reality
+
+The planner uses **statistics** about each table to guess row counts. When "estimated rows" and "actual rows" differ by orders of magnitude, the plan is probably wrong because the statistics are stale or the columns are correlated. `ANALYZE tablename` refreshes statistics (autovacuum normally does it).
+
+### A safe loop
+
+1. Capture the slow query and run `EXPLAIN (ANALYZE, BUFFERS)` on realistic data (a tiny dev table lies).
+2. Find the node with most of the time or the biggest estimate error.
+3. Change one thing: add an index, rewrite the predicate, refresh statistics.
+4. Run it again and compare. Keep the change only if the numbers improved.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Running EXPLAIN ANALYZE on an UPDATE or DELETE in production. It executes the statement. Use `BEGIN; EXPLAIN ANALYZE ...; ROLLBACK;`.
+</Callout>
+
+- **Tuning on tiny local data**, where a scan is always the fastest plan.
+- **Reading only the total time** instead of the node where it is spent.
+- **Ignoring estimate-versus-actual mismatches**, the cheapest clue to a bad plan.
+- **Changing several things at once**, so you cannot tell what helped.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+EXPLAIN ANALYZE gives the truth but costs a real execution and adds some measurement overhead; plain EXPLAIN is free but only an estimate. Forcing plans with planner settings can fix one query and hurt others, so use it to experiment, not as a permanent fix.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Enable slow-query logging and a statements-statistics extension to find the worst queries by total time, capture plans for them, and review after schema or data growth changes. Store the before and after numbers in the pull request that adds an index.
+</Callout>
+
+## Check yourself
+
+<Exercise id="explain-vs-analyze" kind="quiz" prompt="What is the difference between EXPLAIN and EXPLAIN ANALYZE?" options={["No difference", "EXPLAIN shows an estimated plan; ANALYZE actually runs the query and reports real timings", "ANALYZE only works on SELECT", "EXPLAIN runs the query twice"]} answer={1} explain="Plain EXPLAIN never executes the statement. EXPLAIN ANALYZE does, so it reports actual time and row counts." />
+
+<Exercise id="explain-signature" kind="debug" prompt="A plan shows Seq Scan with 'Rows Removed by Filter: 1000000' and rows=1. What does it suggest?" options={["The table is empty", "An index on the filtered column would likely help", "The query is already optimal", "The statistics are perfect"]} answer={1} explain="Scanning a million rows to keep one is exactly what a selective index avoids." />
+
+<Exercise id="explain-danger" kind="scenario" prompt="You want the real timing of a slow DELETE on production. What is the safe way?" options={["Run EXPLAIN ANALYZE DELETE directly", "Wrap it in BEGIN ... ROLLBACK, or test on a copy", "Skip measuring", "Use LIMIT 0"]} answer={1} explain="ANALYZE executes the statement, so the rows would really be deleted. A rolled-back transaction or a copy keeps the data safe." />
+
+<Exercise id="explain-estimate" kind="predict" prompt="The plan estimates 10 rows but actually returns 800 000. What is the most likely cause?" options={["The disk is full", "Stale or misleading statistics, so the planner chose a plan for the wrong size", "The index is too small", "The query has a syntax error"]} answer={1} explain="Large estimate errors mean the planner reasoned from wrong numbers. Refresh statistics with ANALYZE and re-check the plan." />

@@ -1,0 +1,83 @@
+---
+chapter: F3
+slug: designing-a-distributed-rate-limiter
+title: "Design: a distributed rate limiter"
+order: 1
+summary: "Limit requests per client across many app instances. Compare fixed window, sliding window and token bucket, then share state safely, using a measured boundary-burst example."
+objectives:
+  - Compare fixed window, sliding window and token bucket algorithms
+  - Explain the boundary burst problem with numbers
+  - Share limiter state across instances atomically
+  - Decide fail-open or fail-closed behaviour
+concepts: [fixed window, sliding window, token bucket, boundary burst, atomic increment, shared state, fail-open, "429", Retry-After]
+reading:
+  - title: "Stripe: Scaling your API with rate limiters"
+    url: "https://stripe.com/blog/rate-limiters"
+  - title: "RFC 6585: 429 Too Many Requests"
+    url: "https://www.rfc-editor.org/rfc/rfc6585#section-4"
+misconceptions:
+  - belief: "A per-instance in-memory counter is a rate limiter."
+    correction: "With N instances behind a load balancer each keeps its own count, so a client can get roughly N times the limit. Shared state is needed for a global limit."
+  - belief: "A fixed window of 100 per minute never allows more than 100 per minute."
+    correction: "A client can send 100 at the end of one window and 100 at the start of the next. In a measured simulation fixed windows admitted 200 across the boundary where a sliding log admitted 100."
+---
+
+## Why it exists
+
+Limits protect capacity and fairness (C3). On one instance it is a map; across many it is a shared-state problem.
+
+<Callout kind="why">
+It is a small, sharp example of atomicity, shared state and failure policy.
+</Callout>
+
+## How it works
+
+### Algorithms
+
+- **Fixed window**: counter per client per time bucket. Cheap; bursts at the boundary (200 allowed in a short span in the measured run).
+- **Sliding window log**: store timestamps; exact (100 allowed); memory grows with the limit.
+- **Sliding window counter**: weight the previous and current window; approximate, small.
+- **Token bucket**: tokens refill at a rate up to a capacity; each request spends one. Allows controlled bursts, steady rate. The usual choice.
+
+### Sharing state
+
+Every instance must read-modify-write the same counter atomically, or two instances both see 99 and both allow. Options: a database row updated with `UPDATE ... SET count = count + 1 ... RETURNING` (atomic, uses what you already run), or Redis `INCR` with expiry (fast, extra infrastructure). This project's design choice is Postgres-backed state so no new service is needed; a test runs two app instances against one database and checks the limit is shared.
+
+### Failure policy
+
+If the limiter store is down: **fail-open** (allow, risking overload) or **fail-closed** (reject, risking an outage caused by the limiter). Public APIs usually fail open for general limits and closed for security-critical ones such as login attempts.
+
+### Responses
+
+Return 429 with `Retry-After`, and consider `RateLimit` headers so clients can back off (B7, B9). Key by user or API key where possible; IP alone penalises shared networks.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Read-then-write in two statements. Concurrent requests both pass the check.
+</Callout>
+
+- **Trusting a spoofable forwarded IP header.**
+- **No expiry on counters**, so storage grows.
+- **One global limit** with no per-route or per-tier limits.
+- **Not telling clients when to retry.**
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Exact algorithms cost memory or round trips; approximate ones are cheap and slightly lenient. A shared store adds latency and a dependency; local limits are fast and imprecise.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Track allowed versus rejected per route, alert on spikes, and test the store-down behaviour deliberately.
+</Callout>
+
+## Check yourself
+
+<Exercise id="rl-boundary" kind="scenario" prompt="A fixed window allows 100/min. A client sends 100 at 0:59 and 100 at 1:01. What happened?" options={["Nothing unusual", "200 requests in 2 seconds were allowed, a boundary burst", "The limiter blocked both", "It is impossible"]} answer={1} explain="Each fell into a different window, so both were allowed." />
+
+<Exercise id="rl-atomic" kind="debug" prompt="Two instances both read count 99, then both write 100 and allow. What is wrong?" options={["The limit is too high", "The check and increment were not atomic", "Clocks differ", "Redis is slow"]} answer={1} explain="Use an atomic increment-and-return in the shared store." />
+
+<Exercise id="rl-open" kind="quiz" prompt="Which endpoint should fail closed if the limiter store is down?" options={["Public docs", "Login attempts", "Health check", "Static assets"]} answer={1} explain="Security-sensitive limits protect against brute force, so rejecting is safer." />

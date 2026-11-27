@@ -1,0 +1,101 @@
+---
+chapter: C5
+slug: deadlocks-and-worker-models
+title: "Deadlocks, scheduling and worker models"
+order: 2
+summary: "Locks can make tasks wait for each other forever. Deadlock needs four conditions, and breaking any one prevents it. Worker models (event loop, thread pool, worker threads, processes) decide how a backend spends its cores."
+objectives:
+  - Reproduce a deadlock with two locks acquired in opposite order and fix it with ordering
+  - State the four conditions for deadlock and map fixes to them
+  - Explain the producer-consumer pattern with a bounded buffer
+  - Choose between event loop, worker threads and multiple processes for a workload
+concepts: [deadlock, lock ordering, starvation, producer-consumer, bounded buffer, backpressure, worker threads, cluster, thread pool]
+reading:
+  - title: "Wikipedia: Deadlock (Coffman conditions)"
+    url: "https://en.wikipedia.org/wiki/Deadlock_(computer_science)"
+  - title: "Node.js docs: Cluster"
+    url: "https://nodejs.org/api/cluster.html"
+misconceptions:
+  - belief: "A deadlock is rare and shows up as an error message."
+    correction: "A deadlock is silent: the tasks just stop making progress, and the process looks alive. It depends on timing, so it can pass every test and strike under load. Detection needs timeouts, monitoring or a database that detects cycles."
+  - belief: "More worker threads always means more throughput."
+    correction: "Throughput is limited by cores, by contention on shared state and by the serial part of the work. Past that point extra workers add scheduling cost and memory, and can slow things down."
+---
+
+## Why it exists
+
+Once you have locks, you have a new failure that is not wrong answers but no answer at all. And once you know how to run things concurrently, you must decide how many workers and of what kind, which is mostly a question about whether the work waits on I/O or burns CPU.
+
+<Callout kind="why">
+Locks fix races and create the possibility of deadlock. The skill is acquiring them in a way that cannot cycle, and keeping the amount of locked work small.
+</Callout>
+
+## How it works
+
+### A deadlock you can run
+
+Task T1 takes lock A then wants B. Task T2 takes lock B then wants A. In a test, each acquired its first lock, slept briefly, then asked for the second:
+
+```text file=deadlock.txt
+opposite order:  T1 got A | T2 got B | T1 wants B | T2 wants A
+                 -> STUCK after 500 ms (neither can ever proceed)
+same order:      both completed
+```
+
+Nothing crashed and no error was thrown: the tasks simply never finish. That silence is why deadlocks are dangerous.
+
+### The four conditions
+
+A deadlock needs all four (the Coffman conditions): **mutual exclusion** (a lock is held exclusively), **hold and wait** (a task holds one lock while waiting for another), **no pre-emption** (locks are not taken away) and **circular wait** (a cycle of tasks each waiting for the next). Remove one and deadlock is impossible:
+
+- **Break circular wait** with a global **lock order** (always A before B). This is the standard fix and it worked above.
+- **Break hold and wait** by acquiring everything at once or not at all.
+- **Break no pre-emption** with timeouts: give up and retry, as databases do by aborting one of a deadlocked pair.
+- **Avoid mutual exclusion** with lock-free or message-passing designs.
+
+### Producer-consumer
+
+Producers add items to a buffer; consumers take them. With a **bounded buffer** (capacity N), producers wait when it is full and consumers wait when it is empty. The bound is **backpressure**: a fast producer cannot overwhelm a slow consumer or exhaust memory. This is the in-memory version of the queues in the previous B-chapter and of the overload lesson: unbounded buffering just moves the failure later.
+
+### Worker models
+
+- **Event loop** (Node's main thread): one thread, many connections, ideal for I/O-bound work that mostly waits (the 0.3 chapter). A CPU-heavy handler blocks everyone.
+- **Thread pool for blocking calls** (libuv runs file system, DNS lookups and some crypto off the main thread): a small default pool that can itself become a bottleneck.
+- **Worker threads**: real parallelism for CPU work with message passing or shared memory. Splitting a loop across two workers ran 1.73x faster on two cores.
+- **Multiple processes** (cluster, or several containers behind a balancer): isolation, use of all cores and resilience to a crash, with no shared memory; state moves to the database or cache.
+
+A rule of thumb: one event-loop process per core for I/O-heavy services, worker threads or a separate job service for CPU-heavy tasks, and measure.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Taking locks in different orders in different code paths. Each path looks fine alone; the cycle appears only when two run together.
+</Callout>
+
+- **Calling unknown code (callbacks, network) while holding a lock.**
+- **Unbounded queues** between producer and consumer.
+- **CPU work on the event loop**, stalling all requests.
+- **Spawning a thread per request**, which exhausts memory under load.
+- **No timeout on lock or database waits**, so a deadlock becomes a hung service.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Lock ordering is simple but needs discipline across a codebase. Timeouts recover from deadlock at the cost of retry logic. Processes isolate failures but share nothing, so coordination goes through slower external stores.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Monitor event-loop lag, pool wait times and queue lengths; add timeouts everywhere a task can wait; let the database detect and abort deadlocked transactions and retry them (B4); and test concurrency-sensitive paths with parallel load and, where possible, tools that explore interleavings.
+</Callout>
+
+## Check yourself
+
+<Exercise id="dl-cause" kind="scenario" prompt="T1 holds lock A and waits for B. T2 holds B and waits for A. Nothing errors and the service stops responding for those tasks. What is this?" options={["A memory leak", "A deadlock caused by circular wait", "A cache miss", "A timeout"]} answer={1} explain="Each task waits for a lock the other holds, so neither can proceed. There is no error because nothing is failing, only waiting." />
+
+<Exercise id="dl-fix" kind="quiz" prompt="What is the most common way to prevent this kind of deadlock?" options={["Larger locks", "Always acquire locks in one global order", "Remove all threads", "Sleep randomly"]} answer={1} explain="If every task takes A before B, a cycle of waiting cannot form, which breaks the circular-wait condition." />
+
+<Exercise id="dl-buffer" kind="predict" prompt="A producer is faster than the consumer and the buffer between them is unbounded. What happens over time?" options={["Nothing, buffers are free", "The buffer grows until memory runs out or latency becomes huge", "The consumer speeds up", "The producer slows automatically"]} answer={1} explain="Without a bound there is no backpressure. Bounding the buffer makes the producer wait or reject instead." />
+
+<Exercise id="dl-model" kind="scenario" prompt="A Node API spends most of its time waiting on the database and calls an occasional 300 ms image resize inside request handlers. Requests during a resize stall. What is a sound change?" options={["Add more database connections", "Move the CPU-heavy resize to a worker thread or a background job", "Remove the event loop", "Raise the timeout"]} answer={1} explain="CPU work on the event loop blocks every connection. Offload it to worker threads or a job queue." />

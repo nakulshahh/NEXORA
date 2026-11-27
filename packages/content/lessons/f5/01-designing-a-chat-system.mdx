@@ -1,0 +1,74 @@
+---
+chapter: F5
+slug: designing-a-chat-system
+title: "Design: a chat system"
+order: 1
+summary: "Real-time chat needs persistent connections, ordered and durable messages, delivery to offline users and routing across many servers. Order per conversation, store first, then fan out."
+objectives:
+  - Choose a transport for real-time delivery and justify it
+  - Order messages within a conversation and assign ids
+  - Route messages to users connected to different servers
+  - Handle offline delivery, reconnects and duplicates
+concepts: [WebSocket, presence, message ordering, sequence number, fan-out, pub/sub, offline delivery, acknowledgement, reconnect, backpressure]
+reading:
+  - title: "RFC 6455: The WebSocket Protocol"
+    url: "https://www.rfc-editor.org/rfc/rfc6455"
+  - title: "MDN: WebSockets API"
+    url: "https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API"
+misconceptions:
+  - belief: "Messages arrive in the order they are sent, so ordering is free."
+    correction: "Different servers and retries reorder deliveries. Assign a per-conversation sequence number on the server and let clients sort and detect gaps."
+  - belief: "WebSockets alone make chat reliable."
+    correction: "They give a low-latency pipe. Reliability comes from persisting messages, acknowledgements, resend after reconnect and deduplication by message id."
+---
+
+## Why it exists
+
+Chat is the standard case for persistent connections, ordering and routing, building on the WebSocket lesson (D6).
+
+<Callout kind="why">
+Users judge it by feel: instant delivery, no lost or duplicated messages, correct order.
+</Callout>
+
+## How it works
+
+1. **Connect**: clients hold a WebSocket to a gateway server (fall back to long polling where blocked). Gateways are stateful, each holding thousands of connections.
+2. **Send**: the client sends a message with a client-generated id. The server authorises it, assigns the conversation's next **sequence number** (a counter per conversation, in the database), **persists** it, then acknowledges the sender.
+3. **Fan out**: look up the conversation's members and which gateway each is connected to (a presence map in a shared store), then publish to those gateways via pub/sub; each pushes to its sockets.
+4. **Offline users**: they are not connected, so the stored message waits. On reconnect the client says "my last sequence number is 120" and the server replays everything after it, which also repairs any gap. Optionally trigger a push notification (F4).
+5. **Duplicates**: the client retries unacknowledged sends; the server de-duplicates by client message id.
+
+Ordering is per conversation, not global; a single sequencer per conversation (one writer) is simple and enough. For very large groups, fan-out cost grows with members (see F7); read receipts and typing indicators are ephemeral and need not be stored.
+
+Backpressure: a slow client cannot keep up; bound its outbound buffer and drop or disconnect it.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Delivering to online users first and storing later. A crash between the two loses a message the sender thinks was sent.
+</Callout>
+
+- **Ordering by client timestamps.**
+- **No replay after reconnect.**
+- **Unbounded per-connection buffers.**
+- **Sticky load balancing assumed without a presence map.**
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Persist-then-deliver adds a write to the latency path and guarantees durability. Skipping storage lowers latency and loses messages on failure.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Monitor connection counts, delivery latency, reconnect rates and queue lag; roll out gateways with graceful drain (C2) so deploys do not drop everyone at once.
+</Callout>
+
+## Check yourself
+
+<Exercise id="ch-order" kind="quiz" prompt="How do you get a consistent order within a conversation?" options={["Client clocks", "A server-assigned per-conversation sequence number", "Alphabetical sort", "Random ids"]} answer={1} explain="One authority numbers the messages, and clients sort by it." />
+
+<Exercise id="ch-offline" kind="scenario" prompt="A user was offline for an hour. How do they catch up?" options={["They cannot", "Reconnect with the last seen sequence number and replay newer stored messages", "Resend all history", "Use email only"]} answer={1} explain="Persisted messages plus a cursor make catch-up cheap and gap-free." />
+
+<Exercise id="ch-crash" kind="debug" prompt="A server crashes after pushing a message to receivers but before saving it. What went wrong?" options={["Nothing", "Delivery happened before durable storage, so the message can vanish from history", "Too many sockets", "TLS"]} answer={1} explain="Persist first, acknowledge, then fan out." />

@@ -1,0 +1,113 @@
+---
+chapter: A6
+slug: controllers-services-repositories
+title: "Layers: controllers, services and repositories"
+order: 1
+summary: "Split a handler into three jobs: translate HTTP, apply business rules, and talk to storage. The split is what lets you test rules without a server and swap storage without rewriting rules."
+objectives:
+  - Describe what belongs in a controller, a service and a repository
+  - Keep HTTP details out of business rules and SQL out of controllers
+  - Map domain errors to HTTP statuses in one place
+  - Judge when layering helps and when it is ceremony
+concepts: [controller, service, repository, separation of concerns, domain error, dependency injection, testability]
+reading:
+  - title: "Martin Fowler: Presentation Domain Data Layering"
+    url: "https://martinfowler.com/bliki/PresentationDomainDataLayering.html"
+  - title: "Node.js Best Practices: project structure"
+    url: "https://github.com/goldbergyoni/nodebestpractices"
+misconceptions:
+  - belief: "Layers exist because frameworks say so."
+    correction: "Layers exist to separate reasons to change. HTTP details, business rules and storage each change for different reasons and at different speeds, so keeping them apart limits what one change can break."
+  - belief: "The controller is the right place for the business logic because it is where the request arrives."
+    correction: "A controller that contains rules can only be tested by simulating HTTP, and the same rule cannot be reused from a job, a script or another endpoint. Rules belong in a function that knows nothing about requests."
+---
+
+## Why it exists
+
+Early on, one function does everything: parse the request, check the rules, run SQL, build the response. It works for ten endpoints. At fifty, a change to the database layout touches every handler, a rule such as "no negative transfers" is copied in four places, and testing anything needs a running server and database.
+
+The fix is not a framework feature. It is deciding that each piece of code has **one reason to change**.
+
+<Callout kind="why">
+Three layers give three seams: you can test rules with plain function calls, replace storage without touching rules, and change URL shapes without touching either.
+</Callout>
+
+## How it works
+
+| Layer | Knows about | Does not know about |
+|---|---|---|
+| **Controller** (route handler) | requests, responses, status codes, validation | SQL, business rules |
+| **Service** (use case) | business rules, transactions, other services | HTTP, request or response objects |
+| **Repository** | storage queries and mapping rows to objects | HTTP, business rules |
+
+Here is a money transfer in all three, runnable as plain Node. The repository is an in-memory map; in a real service its two methods would run SQL.
+
+```js file=layers.mjs mark=3,4,13,22,23
+const users = new Map([[1, { id: 1, balance: 100 }], [2, { id: 2, balance: 5 }]]);
+// repository: the only code that knows how data is stored
+const repo = { get: (id) => users.get(id), save: (u) => users.set(u.id, u) };
+
+class InsufficientFunds extends Error {}
+
+// service: business rules, no HTTP in sight
+function transfer(repo, fromId, toId, amount) {
+  const from = repo.get(fromId), to = repo.get(toId);
+  if (!from || !to) throw new Error("not found");
+  if (from.balance < amount) throw new InsufficientFunds("insufficient funds");
+  repo.save({ ...from, balance: from.balance - amount });
+  repo.save({ ...to, balance: to.balance + amount });
+}
+
+// controller: translate HTTP in, HTTP out
+function postTransfer(req) {
+  const { from, to, amount } = req.body;
+  if (!Number.isInteger(amount) || amount <= 0) return { status: 400 };
+  try { transfer(repo, from, to, amount); return { status: 204 }; }
+  catch (e) { return { status: e instanceof InsufficientFunds ? 409 : 404 }; }
+}
+```
+
+Running it gives these results. Moving 30 from account 1 to account 2 returns `{ status: 204 }` and leaves balances 70 and 35. Asking account 2 to send 500 returns 409, an unknown account returns 404, and an amount of -3 returns 400.
+
+Notice three things:
+
+- `transfer` takes the repository as an **argument**. That is dependency injection in its simplest form: a test passes a fake repository and needs no database.
+- The service throws a **domain error** (`InsufficientFunds`), not an HTTP status. Only the controller decides that this means 409. A queue worker calling the same service would map it differently.
+- Validation of the *shape* of the request (is `amount` a positive integer?) lives in the controller; the rule "balance must cover the amount" lives in the service.
+
+### Where does a transaction go?
+
+The service decides what must succeed or fail together, so it owns the transaction boundary, and the repository executes inside it. In this toy the two `save` calls are not atomic: a crash between them loses money. The transactions chapter (B4) shows how to fix that properly.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Passing the framework's request object into the service. The service now cannot be called from a job or a test without faking HTTP, and the layers have merged again under another name.
+</Callout>
+
+- **"Anemic" pass-through layers** where the service only forwards to the repository and adds nothing.
+- **Repositories containing business rules** such as "apply the discount here".
+- **Returning database rows** straight to the client, which freezes your table layout into your public API.
+- **Catching every error in the controller** and returning 500, which hides the domain errors you wanted to map.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Layers add files, names and indirection. For a handful of simple CRUD endpoints a single function per route is clearer. Introduce the split when rules start to repeat, when you need tests without a server, or when more than one entry point (HTTP, queue, CLI) must run the same logic.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Keep a single place that maps domain errors to HTTP responses, so every endpoint answers the same way. Pass dependencies in explicitly at start-up instead of importing singletons, which makes the wiring visible and tests easy. Log at the service layer with business meaning ("transfer rejected, insufficient funds") and at the edge with HTTP meaning.
+</Callout>
+
+## Check yourself
+
+<Exercise id="layers-where-rule" kind="quiz" prompt="The rule 'a transfer may not exceed the account balance' belongs in which layer?" options={["Controller", "Service", "Repository", "The database driver"]} answer={1} explain="It is a business rule. The service can then be tested with plain function calls and reused by any entry point, while the controller only translates HTTP." />
+
+<Exercise id="layers-predict-status" kind="predict" prompt="In the example, what status does postTransfer return when the sender's balance is too small?" options={["204", "400", "409", "404"]} answer={2} explain="The service throws InsufficientFunds, and the controller maps that domain error to 409 Conflict. 400 is for a malformed amount and 404 for an unknown account." />
+
+<Exercise id="layers-req-in-service" kind="debug" prompt="A service function takes (req, res) and reads req.body directly. What problem does this create?" options={["It runs slower", "It cannot be reused from a queue worker or tested without faking HTTP", "Express forbids it", "It prevents using a database"]} answer={1} explain="The service is now coupled to HTTP. Pass plain values in and return plain values or throw domain errors, and the controller handles the request and response." />
+
+<Exercise id="layers-when-skip" kind="scenario" prompt="You are building three read-only endpoints that each run one query and return it. Which approach fits best?" options={["Full controller, service and repository for each", "A simple handler per route, adding layers when rules or reuse appear", "Put all queries in the frontend", "Create an abstract base service"]} answer={1} explain="Layers earn their cost when there is logic to protect or reuse. Adding them to trivial reads is ceremony; refactor when the need appears." />

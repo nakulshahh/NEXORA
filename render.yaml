@@ -1,0 +1,47 @@
+# Render Blueprint for the API. The AI service has its own entry below.
+# Secrets are declared with `sync: false`: Render asks for them in the dashboard; they are never stored in this repo.
+services:
+  - type: web
+    name: nexora-api
+    runtime: node
+    plan: free            # free instances sleep when idle (cold start ~30s); use "starter" for always-on
+    autoDeployTrigger: checksPass   # deploy only after the GitHub Actions `ci` checks pass on the commit
+    buildFilter: { paths: ["apps/api/**", "pnpm-lock.yaml", "pnpm-workspace.yaml", "package.json"] }
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @nexora/api build
+    preDeployCommand: pnpm --filter @nexora/api db:deploy   # applies SQL migrations before the new version takes traffic
+    startCommand: pnpm --filter @nexora/api start
+    healthCheckPath: /readyz
+    envVars:
+      - { key: NODE_VERSION, value: "22" }
+      - { key: NODE_ENV, value: production }
+      - { key: TRUST_PROXY, value: "1" }
+      - { key: DATABASE_SSL, value: require }
+      - { key: DATABASE_URL, sync: false }          # Neon connection string
+      - { key: WEB_ORIGIN, sync: false }            # e.g. https://nexora.vercel.app (or your custom domain)
+      - { key: COOKIE_SECRET, generateValue: true }
+      - { key: GITHUB_CLIENT_ID, sync: false }
+      - { key: GITHUB_CLIENT_SECRET, sync: false }
+      - { key: GOOGLE_CLIENT_ID, sync: false }
+      - { key: GOOGLE_CLIENT_SECRET, sync: false }
+      - { key: AI_SERVICE_URL, sync: false }        # the nexora-ai service URL
+      - { key: AI_INTERNAL_TOKEN, sync: false }     # same value as on nexora-ai
+
+  - type: web
+    name: nexora-ai
+    runtime: python
+    plan: free            # check memory with scripts/bench.py before enabling EMBEDDER=sbert (see docs/AI.md)
+    rootDir: apps/ai
+    autoDeployTrigger: checksPass
+    # Lessons are the knowledge base: editing one must redeploy (preDeployCommand re-ingests).
+    buildFilter: { paths: ["apps/ai/**", "packages/content/lessons/**"] }
+    buildCommand: pip install .
+    # Render clones the whole repo, so ../../packages/content/lessons is available to ingest at deploy time.
+    preDeployCommand: nexora-ai ingest
+    startCommand: nexora-ai serve --host 0.0.0.0 --port $PORT
+    healthCheckPath: /readyz
+    envVars:
+      - { key: PYTHON_VERSION, value: "3.12.7" }
+      - { key: APP_ENV, value: production }
+      - { key: EMBEDDER, value: hashing }
+      - { key: DATABASE_URL, sync: false }          # Neon connection string (needs pgvector)
+      - { key: AI_INTERNAL_TOKEN, sync: false }

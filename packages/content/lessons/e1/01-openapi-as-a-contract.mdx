@@ -1,0 +1,101 @@
+---
+chapter: E1
+slug: openapi-as-a-contract
+title: "OpenAPI: the API contract as a machine-readable document"
+order: 1
+summary: "An OpenAPI document describes every path, parameter, body, response and error of an HTTP API in a standard format. When it is generated from the same schemas the server validates with, docs and behaviour cannot drift apart."
+objectives:
+  - Read the structure of an OpenAPI 3.1 document
+  - Explain why one source of truth for validation and documentation prevents drift
+  - Describe security schemes, shared components and error schemas
+  - Serve the document and use it for tooling
+concepts: [OpenAPI, JSON Schema, contract, path, operation, component, security scheme, single source of truth, code generation]
+reading:
+  - title: "OpenAPI Specification 3.1"
+    url: "https://spec.openapis.org/oas/v3.1.0"
+  - title: "JSON Schema: Understanding JSON Schema"
+    url: "https://json-schema.org/understanding-json-schema/"
+misconceptions:
+  - belief: "API documentation is a document you write after the code."
+    correction: "Hand-written docs drift the first time the code changes. A contract generated from, or checked against, the same schemas that validate requests stays true by construction."
+  - belief: "OpenAPI is only for producing a pretty documentation page."
+    correction: "The document is machine-readable, so it also drives client and server code generation, request validation, mock servers, contract tests and breaking-change detection."
+---
+
+## Why it exists
+
+A client developer needs to know exactly what to send and what comes back, including errors. Prose in a wiki goes stale; a machine-readable contract can be tested, versioned and turned into code.
+
+<Callout kind="why">
+The contract is the interface between teams. Making it a file that tools can read turns arguments about what the API does into a diff you can review.
+</Callout>
+
+## How it works
+
+### Anatomy
+
+An OpenAPI 3.1 document is JSON or YAML with a few top-level parts:
+
+- `info` and `servers`: name, version, base URLs.
+- `paths`: each URL with its **operations** (`get`, `post`, ...), their parameters, request body schema and a response per status code.
+- `components`: reusable pieces: **schemas** (JSON Schema), security schemes, shared responses.
+- `security`: which operations need which scheme (a cookie, a bearer token, an API key).
+
+This project's API document (`apps/api/src/openapi.ts`, served at `/api/openapi.json`) describes 15 paths: health and readiness probes, the auth routes (register, login, logout, sessions, OAuth start and callback, account) and the progress routes. It declares a cookie security scheme and one shared `Error` schema, so every failure response has the same shape: `{ error: { code, message } }`.
+
+### One source of truth
+
+The same Zod schemas that validate requests at runtime are converted to JSON Schema for the document:
+
+```ts file=openapi.ts mark=2,3
+const Credentials = z.object({ email: z.email(), password: z.string().min(1).max(128) });
+// the same schema validates the request and, converted, documents it:
+Credentials: z.toJSONSchema(Credentials, { target: "draft-2020-12", io: "input" }),
+```
+
+Change a limit in the schema and the validation and the documentation change together. That is the pattern to aim for: **schema first**, with docs, types and validation derived. The alternative, **contract first**, writes the OpenAPI document by hand and generates server stubs and client types from it; it suits teams that agree on the interface before building, at the cost of keeping generation in the build.
+
+### Why the error schema matters
+
+A documented, consistent error shape (a stable `code` for programs and a `message` for people) is part of the contract. Clients branch on `code`, never on message text (A5). Document each status an operation can return: 200, 201, 400 or 422 for validation, 401, 403, 404, 409, 429.
+
+### What tooling reads it
+
+- **Docs UIs** (Swagger UI, Redoc, Scalar) render it interactively.
+- **Client generators** produce typed SDKs in many languages.
+- **Validators and mocks** check traffic against the contract or serve fake responses before the backend exists.
+- **Contract tests** (next lesson) confirm the running server matches the document.
+
+## Common mistakes
+
+<Callout kind="mistake">
+A document that lists only the happy path. Clients then discover errors, rate limits and auth rules in production. Describe failures as carefully as successes.
+</Callout>
+
+- **Hand-maintained specs** with no check against the server.
+- **Different error shapes per endpoint.**
+- **Leaking internals** (database field names, admin-only routes) into the public document.
+- **No `operationId`s**, so generated clients have ugly method names.
+- **Treating the version string as decoration** and never bumping it for breaking changes.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Schema-first generation keeps code and docs in sync with the least effort and ties the document's detail to what your schema library can express. Contract-first gives you design control and a review step before coding, and needs generation tooling and discipline to keep the implementation conforming.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Publish the document from CI as a build artifact, serve it at a stable URL, version it with the API, and keep internal and public documents separate so private routes are not advertised.
+</Callout>
+
+## Check yourself
+
+<Exercise id="oas-parts" kind="quiz" prompt="Where are reusable schemas defined in an OpenAPI document?" options={["info", "components", "servers", "tags"]} answer={1} explain="Components hold reusable schemas, security schemes and shared responses that paths reference." />
+
+<Exercise id="oas-drift" kind="scenario" prompt="The documented limit for display names is 80 characters, but the server actually allows 120 after a code change. How could this have been prevented?" options={["Writing docs more carefully", "Generating the document from the same schema that validates requests", "Removing limits", "Using a bigger font"]} answer={1} explain="With one schema driving validation and documentation, they cannot disagree." />
+
+<Exercise id="oas-error" kind="debug" prompt="Clients crash on a 409 response because that endpoint returns a plain string while others return a JSON error object. What is the lesson?" options={["409 is invalid", "Use one documented error schema across all endpoints", "Avoid errors", "Clients should parse any text"]} answer={1} explain="A consistent, documented error shape is part of the contract and lets clients handle failures uniformly." />
+
+<Exercise id="oas-use" kind="quiz" prompt="Which is a benefit of OpenAPI beyond a docs page?" options={["It speeds up TCP", "It enables generated typed clients, mocks and contract tests", "It removes the need for authentication", "It replaces the database"]} answer={1} explain="Because the contract is machine-readable, tools can generate and verify code from it." />

@@ -1,0 +1,19 @@
+# Keep the build context small and keep secrets out of image layers.
+.git
+.github
+**/node_modules
+**/.next
+**/dist
+**/.venv
+**/__pycache__
+**/*.egg-info
+**/build
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.tar.gz
+docs
+.shots
+coverage

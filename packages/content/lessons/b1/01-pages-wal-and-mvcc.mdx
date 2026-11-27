@@ -1,0 +1,104 @@
+---
+chapter: B1
+slug: pages-wal-and-mvcc
+title: "Inside a database: pages, the write-ahead log and row versions"
+order: 1
+summary: "A relational database stores rows in fixed-size pages, logs every change before applying it so a crash cannot lose committed work, and keeps old row versions so readers do not block writers."
+objectives:
+  - Describe a heap table as a sequence of fixed-size pages holding row versions
+  - Explain what the write-ahead log is and why commit waits for it
+  - Show that an UPDATE creates a new row version rather than overwriting
+  - Connect page reads to the cost of a full table scan
+concepts: [page, heap, tuple, ctid, write-ahead log, WAL, fsync, MVCC, row version, vacuum]
+reading:
+  - title: "PostgreSQL docs: Database Page Layout"
+    url: "https://www.postgresql.org/docs/current/storage-page-layout.html"
+  - title: "PostgreSQL docs: Write-Ahead Logging (WAL)"
+    url: "https://www.postgresql.org/docs/current/wal-intro.html"
+misconceptions:
+  - belief: "A database reads and writes individual rows on disk."
+    correction: "Storage is read and written in whole pages (8 KB in PostgreSQL). To read one row the database loads its page, which is why many small rows per page make scans efficient and why page counts drive query cost."
+  - belief: "UPDATE changes the row in place."
+    correction: "In PostgreSQL an UPDATE writes a new version of the row and marks the old one obsolete. Readers still looking at the old version are not blocked, and a background process (vacuum) reclaims dead versions later."
+---
+
+## Why it exists
+
+Disks and SSDs do not hand you one byte at a time; they move blocks. Memory is faster than disk by orders of magnitude, and power can fail at any instant. A database has to be fast *and* never lose a transaction it said was committed. Pages, a log and row versioning are the three ideas that make that possible.
+
+<Callout kind="why">
+Almost every performance property you will study later (why scans are slow, why indexes help, why writes cost more than reads) follows from "data lives in pages, and the log is written first".
+</Callout>
+
+## How it works
+
+### Tables are heaps of pages
+
+A table is stored as a **heap**: a file divided into fixed-size **pages** (8192 bytes in PostgreSQL, checked with `SHOW block_size`). Each page holds many row versions, called **tuples**. You can see where a row lives with the hidden `ctid` column, which is *(page number, slot within the page)*. On the lab table in this chapter's examples (one million rows of about 170 bytes):
+
+```sql file=ctid.sql mark=1
+SELECT id, ctid FROM users WHERE id IN (1, 2, 100, 150000);
+--  1 → (0,1)    2 → (0,2)    100 → (2,6)    150000 → (3323,40)
+```
+
+The whole table occupied 22 213 pages, about 174 MB. A query that must examine every row (a **sequential scan**) reads all of those pages. That number, not the row count alone, is the cost.
+
+### Write-ahead logging
+
+Changing a page in memory and writing it back later is fast but unsafe: lose power in between and the change is gone. Writing every changed page to disk at commit would be safe but slow and scattered.
+
+The compromise is the **write-ahead log (WAL)**: before a change is applied to data pages, a compact description of it is appended to a sequential log file. **Commit returns only after the log record is flushed to durable storage** (`fsync`). Data pages themselves can be written later, in the background. After a crash the database replays the log and recovers every committed change.
+
+Sequential appends are far cheaper than scattered page writes, so this gives durability at a small cost. You can watch the log grow:
+
+```sql file=wal.sql mark=1,3
+SELECT pg_current_wal_lsn();            -- a position in the log
+INSERT INTO users(email, country, bio) VALUES ('wal@example.com', 'IN', 'x');
+SELECT pg_current_wal_lsn();            -- advanced by the size of the log record
+```
+
+On the lab table, which had six indexes, one single-row insert advanced the log by 33 240 bytes. That is much larger than the row itself because the log also describes the index changes, and the first modification of a page after a checkpoint logs the whole page. It is a measurement from one run, not a constant. The same log is what **replication** ships to replicas, which a later chapter builds on.
+
+### Row versions
+
+An `UPDATE` does not edit the old tuple. It writes a new tuple (possibly on another page) and marks the old one as no longer current:
+
+```sql file=update.sql mark=1,2
+UPDATE users SET bio = 'y' WHERE id = 1;
+SELECT id, ctid FROM users WHERE id = 1;   -- was (0,1), now (0,48): a new version
+```
+
+This is **multi-version concurrency control (MVCC)**: each transaction sees the versions that were current when it started, so a reader does not wait for a writer. The price is **dead tuples**: old versions that nothing can see any more. **Vacuum** removes them and marks the space reusable; without it tables bloat and scans read pages full of garbage. The transactions chapter shows how MVCC produces the isolation levels.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Thinking `DELETE` or `UPDATE` immediately frees disk space. The old versions stay until vacuum runs, and the file does not shrink; the space is reused for future rows.
+</Callout>
+
+- **Assuming a committed write is already in the data file.** It is durable because of the log, not because the page was written.
+- **Disabling `fsync` or relying on a cache that lies** for speed, which turns a crash into silent data loss.
+- **Ignoring table bloat** on tables with heavy updates, then wondering why queries slow down.
+- **Estimating cost by row count** instead of page count and access pattern.
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Write-ahead logging makes every write do the work twice (log, then data page) and makes commit latency depend on the disk's flush time. In return you get crash safety and fast sequential I/O. MVCC removes read/write blocking but needs vacuum and extra space. Systems that tune these away (asynchronous commit, in-memory stores) get speed by accepting that a crash can lose recent data.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Watch commit latency and disk flush time, keep autovacuum healthy and monitor dead-tuple counts and table size, and take base backups plus archived WAL so you can restore to a point in time. Treat "the disk reports success" as a requirement: use storage whose flush semantics you trust.
+</Callout>
+
+## Check yourself
+
+<Exercise id="pages-unit" kind="quiz" prompt="In PostgreSQL, what is the basic unit the database reads from and writes to storage for table data?" options={["A single row", "An 8 KB page", "A whole table file", "A single byte"]} answer={1} explain="Storage is handled in fixed-size pages. Reading one row means loading its whole page, which is why page counts determine scan cost." />
+
+<Exercise id="pages-wal-order" kind="quiz" prompt="Why is the log written before the data page is changed on disk?" options={["Logs are smaller, so it saves space", "So committed changes can be replayed after a crash even if the data page never reached disk", "To make reads faster", "Because pages cannot be written at all"]} answer={1} explain="Write-ahead means the description of the change is durable first. Recovery replays it, so a commit that returned can never be lost to a crash." />
+
+<Exercise id="pages-update-ctid" kind="predict" prompt="A row has ctid (0,1). After UPDATE ... WHERE id = 1, you select its ctid again. What is most likely?" options={["Exactly the same, (0,1)", "A different value, because UPDATE wrote a new row version", "NULL", "The query errors"]} answer={1} explain="PostgreSQL writes a new tuple for each update, so the visible row now has a different ctid. The old version is dead until vacuum reclaims it." />
+
+<Exercise id="pages-bloat" kind="scenario" prompt="A table that is updated heavily gets slower over weeks although its live row count is constant. What is a likely cause?" options={["The network is slower", "Dead row versions accumulate faster than vacuum removes them, so scans read more pages", "Indexes are too small", "The WAL is too short"]} answer={1} explain="Each update leaves a dead version behind. Without enough vacuuming the table bloats, so the same number of live rows now spans many more pages." />

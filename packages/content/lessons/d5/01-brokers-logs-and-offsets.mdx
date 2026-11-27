@@ -1,0 +1,106 @@
+---
+chapter: D5
+slug: brokers-logs-and-offsets
+title: "Message brokers: logs, partitions and offsets"
+order: 1
+summary: "A broker like Kafka keeps messages in an append-only log split into partitions. Consumers track an offset, so history can be replayed, order holds only within a partition, and delivery is at least once."
+objectives:
+  - Contrast a work queue with a partitioned, retained log
+  - Explain partitions, keys, ordering guarantees and consumer groups
+  - Show how committing offsets after processing gives at-least-once delivery
+  - Recognise hot partitions and consumer lag
+concepts: [broker, Kafka, topic, partition, offset, consumer group, partition key, consumer lag, retention, at-least-once, replay]
+reading:
+  - title: "Apache Kafka documentation: Introduction"
+    url: "https://kafka.apache.org/documentation/#introduction"
+  - title: "Jay Kreps: The Log"
+    url: "https://engineering.linkedin.com/distributed-systems/log-what-every-software-engineer-should-know-about-real-time-datas-unifying"
+misconceptions:
+  - belief: "Kafka keeps all messages in order."
+    correction: "Ordering is guaranteed only within a single partition. Messages for the same key go to the same partition, so they stay in order; messages in different partitions have no global order."
+  - belief: "A message broker delivers each message exactly once."
+    correction: "The practical guarantee is at least once: if a consumer processes a message and crashes before committing its offset, it will see the message again. Consumers must be idempotent, or use transactional features with their own limits."
+---
+
+## Why it exists
+
+The queue in B7 hands each job to one worker and forgets it. Many systems need more: several independent consumers (billing, search, analytics) all reading the same events, the ability to replay history after a bug, and throughput beyond one database table. A **log-based broker** stores events durably and lets each reader move at its own pace.
+
+<Callout kind="why">
+A log turns "messages in flight" into "a history you can read from any position". Consumers become simple: remember how far you got.
+</Callout>
+
+## How it works
+
+**Verification status:** Kafka was not available in the development sandbox. The semantics below are from Kafka's documentation, and the behaviour shown in the example comes from a small in-memory model I wrote to demonstrate the rules (partition by key hash, per-partition offsets, commit after processing). It is a model of the semantics, not Kafka itself.
+
+### The log
+
+A **topic** is split into **partitions**, each an append-only sequence where every record has a numeric **offset**. Records are not deleted when read; they are kept for a **retention** period (or size), so any consumer can read from any offset and **replay** history. Partitions are spread across brokers for capacity and replicated for durability.
+
+### Keys, partitions and ordering
+
+The producer chooses the partition, usually by hashing a **key** (a user id, an order id). Same key, same partition, so those records stay in order. In the model, with three partitions and keys u1, u2, u3 sending six events:
+
+```text file=partitions.txt
+partition sizes 1,0,5 | all of u1's events are in one partition, in order: a c e
+```
+
+Two lessons from one output. Ordering per key held. And the load was badly uneven (1, 0 and 5 events) because there were only three keys: a **hot partition** limits throughput, so choose a key with many distinct, evenly used values.
+
+### Consumer groups
+
+Consumers in a **group** divide the partitions among themselves: each partition is read by exactly one consumer in the group, so parallelism is capped by the partition count (10 consumers on 3 partitions leaves 7 idle). Different groups each get every record independently. Each group stores its **committed offset** per partition (in Kafka, in an internal topic).
+
+### Offsets and delivery guarantees
+
+The order of "process" and "commit" decides the guarantee:
+
+- **Process then commit**: a crash between them re-delivers the message: **at least once** (duplicates).
+- **Commit then process**: a crash loses the message: **at most once**.
+- **Exactly once** needs transactions that make the output and the offset commit atomic, or idempotent consumers. In practice: use at-least-once and make processing idempotent (B7, B9).
+
+Model run with a crash after processing the third message but before committing it:
+
+```text file=redelivery.txt
+run 1 processed d a b   (crashed before committing b)
+run 2 processed b c e f (b was delivered twice)
+```
+
+### Lag
+
+**Consumer lag** is the distance between the latest offset in a partition and the group's committed offset. Growing lag means consumers cannot keep up; it is the key health metric and the broker-world version of queue age.
+
+## Common mistakes
+
+<Callout kind="mistake">
+Assuming global ordering across a topic. If order matters, key by the entity whose events must be ordered, and accept that different keys are unordered.
+</Callout>
+
+- **Too few partitions**, capping parallelism, or **too many**, adding overhead; changing the count later changes key placement.
+- **Skewed keys** creating a hot partition.
+- **Auto-committing offsets before processing finishes.**
+- **Non-idempotent consumers** under at-least-once delivery.
+- **Using a broker where a Postgres table queue would do.**
+
+## Trade-offs
+
+<Callout kind="tradeoff">
+Logs give replay, fan-out to many consumers and very high throughput. They cost operational complexity (a cluster to run and monitor), ordering only per partition, and eventual consistency between producer and consumer. For simple background jobs, the B7 queue is easier.
+</Callout>
+
+## In production
+
+<Callout kind="prod">
+Alert on consumer lag and on rebalances, size partitions for the throughput you need at your target consumer count, set retention to cover your longest outage plus replay needs, define a dead-letter topic for poison messages, and test consumer restarts and rebalances under load.
+</Callout>
+
+## Check yourself
+
+<Exercise id="kafka-order" kind="quiz" prompt="Where does Kafka guarantee message ordering?" options={["Across the whole topic", "Within a single partition", "Across all topics", "Nowhere"]} answer={1} explain="Records in one partition are ordered by offset. Using the same key sends related records to the same partition." />
+
+<Exercise id="kafka-redeliver" kind="predict" prompt="A consumer processes a message, then crashes before committing its offset. What happens after restart?" options={["The message is lost", "The message is delivered again", "The offset is committed automatically", "The partition is deleted"]} answer={1} explain="The committed offset still points before that message, so it is read again. This is at-least-once delivery." />
+
+<Exercise id="kafka-parallel" kind="scenario" prompt="A topic has 3 partitions and you start 10 consumers in one group. How many do useful work?" options={["10", "3", "1", "7"]} answer={1} explain="Each partition is assigned to one consumer in the group, so parallelism is limited to the partition count." />
+
+<Exercise id="kafka-hot" kind="debug" prompt="Throughput is capped and one partition's lag grows while others are idle. The key is the customer's country and 80 percent of traffic is one country. What is wrong?" options={["Too many consumers", "A skewed key concentrates most records in one hot partition", "Retention is too long", "Offsets are negative"]} answer={1} explain="Keys decide partitions. A low-cardinality or skewed key overloads one partition. Use a key with many evenly used values." />
